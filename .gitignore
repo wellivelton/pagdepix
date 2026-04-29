@@ -1,0 +1,30 @@
+# ambiente
+.env
+.env.*
+
+# dependências
+node_modules/
+vendor/
+
+# logs
+*.log
+
+# banco de dados
+*.sql
+*.dump
+
+# backups
+*.tar.gz
+*.zip
+
+# arquivos temporários
+.cache/
+.tmp/
+
+# uploads e storage
+uploads/
+storage/
+
+# sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+npx ts-node src/scripts/createUser.ts "Edvania Alves" "edvaniafsa76@gmail.com" "10203040W" admin
+
+Para adicionar mais pessoas da equipe, basta rodar na VPS:
+
+
+cd ~/depixcore
+npx ts-node src/scripts/createUser.ts "Nome" "email@exemplo.com" "senha" viewer
+
