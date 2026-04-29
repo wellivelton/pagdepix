@@ -1,0 +1,7 @@
+CREATE DATABASE bitboleto;
+CREATE USER bitboleto_user WITH PASSWORD 'senha_forte_aqui';
+ALTER ROLE bitboleto_user SET client_encoding TO 'utf8';
+ALTER ROLE bitboleto_user SET default_transaction_isolation TO 'read committed';
+ALTER ROLE bitboleto_user SET timezone TO 'UTC';
+GRANT ALL PRIVILEGES ON DATABASE bitboleto TO bitboleto_user;
+

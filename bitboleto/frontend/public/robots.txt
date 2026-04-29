@@ -1,0 +1,6 @@
+# PagDepix - Permitir indexação pelo Google e demais buscadores
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://pagdepix.com/sitemap.xml

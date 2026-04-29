@@ -1,0 +1,270 @@
+🔹 FASE 0 – MENTALIDADE & BASE (Dia 1)
+
+⬜ Definir que o projeto inicial é MVP funcional, não perfeito
+⬜ Aceitar que liquidação é manual no começo
+⬜ Separar:
+
+Email exclusivo do projeto
+
+Telegram exclusivo do projeto
+
+Carteira Liquid exclusiva para o BitBoleto
+
+⬜ Criar pasta local:
+
+bitboleto/
+
+🔹 FASE 1 – PLANEJAMENTO TÉCNICO (Dias 1–2)
+
+⬜ Escolher stack (anotar e não mudar depois):
+
+Sugestão sólida
+
+Frontend: React + Vite + Tailwind
+
+Backend: Node.js + NestJS ou Express
+
+Banco: PostgreSQL
+
+Auth: JWT
+
+Storage PDF/comprovantes: S3-compatible
+
+Infra: VPS Linux (Ubuntu)
+
+⬜ Definir domínios:
+
+bitboleto.com (ou variação)
+
+api.bitboleto.com
+
+⬜ Criar repositório Git (privado)
+
+⬜ Criar .env.example
+
+🔹 FASE 2 – DESIGN & UX (Dias 3–5)
+
+⬜ Desenhar wireframe (papel, Figma ou mental mesmo):
+
+Telas obrigatórias:
+
+⬜ Landing page
+⬜ Cadastro
+⬜ Login
+⬜ Recuperação de senha
+⬜ Dashboard usuário
+⬜ Pagar boleto
+⬜ Histórico
+⬜ Admin – boletos pendentes
+
+⬜ Definir identidade visual:
+
+Cores principais (ex: laranja bitcoin + cinza escuro)
+
+Fonte (Inter ou similar)
+
+Estilo: fintech, limpo, dark
+
+⬜ Criar layout da sidebar (user + admin)
+
+🔹 FASE 3 – SETUP DO BACKEND (Dias 6–8)
+
+⬜ Iniciar projeto backend
+⬜ Configurar conexão com PostgreSQL
+⬜ Criar estrutura:
+
+src/
+ ├ auth
+ ├ users
+ ├ boletos
+ ├ affiliates
+ ├ admin
+ ├ logs
+
+
+⬜ Criar modelos/tabelas:
+
+users
+
+boletos
+
+transactions
+
+affiliates
+
+coupons
+
+logs
+
+admin_actions
+
+⬜ Criar usuário admin manualmente no banco
+
+🔹 FASE 4 – AUTENTICAÇÃO (Dias 9–10)
+
+⬜ Cadastro com hash de senha
+⬜ Login com JWT
+⬜ Refresh token
+⬜ Middleware de autenticação
+⬜ Recuperação de senha por email
+⬜ Verificação de email (opcional MVP)
+
+⬜ Bloquear acesso dashboard sem login
+
+🔹 FASE 5 – FRONTEND BASE (Dias 11–13)
+
+⬜ Iniciar Vite + React
+⬜ Configurar Tailwind
+⬜ Criar estrutura:
+
+pages/
+components/
+layouts/
+services/api.js
+
+
+⬜ Criar layout base com sidebar fixa
+⬜ Tema dark aplicado globalmente
+⬜ Rotas protegidas
+
+🔹 FASE 6 – FLUXO PAGAR BOLETO (Dias 14–17)
+
+⬜ Tela “Pagar boleto”
+
+Upload PDF
+
+Campo código de barras
+
+Valor
+
+Vencimento
+
+Cupom
+
+⬜ Botão calcular taxa (2%)
+
+⬜ Gerar:
+
+Valor DePix
+
+Endereço Liquid
+
+QR Code
+
+⬜ Botão “Já paguei”
+⬜ Modal TXID
+⬜ Enviar tudo para backend
+
+⬜ Status inicial: pendente
+
+🔹 FASE 7 – HISTÓRICO DO USUÁRIO (Dia 18)
+
+⬜ Listar boletos do usuário
+⬜ Mostrar status com badge
+⬜ Mostrar detalhes completos
+⬜ Botão download comprovante (quando pago)
+
+🔹 FASE 8 – PAINEL ADMIN (Dias 19–21)
+
+⬜ Rota protegida admin
+⬜ Sidebar admin
+⬜ Tela “Boletos pendentes”
+
+Todos os dados
+
+Filtro
+
+⬜ Botão:
+
+Marcar como pago
+
+Upload comprovante
+
+⬜ Atualizar status do usuário automaticamente
+
+🔹 FASE 9 – USUÁRIOS & CONTROLE (Dias 22–23)
+
+⬜ Listar usuários
+⬜ Mostrar IP + localização
+⬜ Detectar VPN (API externa)
+⬜ Bloquear ações se VPN
+
+⬜ Ações:
+
+Limitar valor
+
+Bloquear
+
+Desativar
+
+⬜ Logs de ações do admin
+
+🔹 FASE 10 – AFILIADOS (Dias 24–25)
+
+⬜ Criar sistema de cupons
+⬜ Aplicar desconto 0,5%
+⬜ Calcular comissão 0,5%
+
+⬜ Painel afiliado:
+
+Ganhos
+
+Histórico
+
+Total acumulado
+
+⬜ Status: saque manual via Telegram
+
+🔹 FASE 11 – SEGURANÇA & POLIMENTO (Dias 26–27)
+
+⬜ Rate limit
+⬜ Proteção contra brute force
+⬜ Logs de erro
+⬜ Validação de inputs
+⬜ Anti-replay TXID
+⬜ Backup automático
+
+⬜ Termos de uso
+⬜ Política de privacidade
+
+🔹 FASE 12 – DEPLOY (Dias 28–29)
+
+⬜ Configurar VPS
+⬜ Instalar:
+
+Node
+
+Nginx
+
+PostgreSQL
+
+⬜ SSL (Let's Encrypt)
+⬜ Build frontend
+⬜ PM2 para backend
+
+⬜ Variáveis de ambiente
+
+🔹 FASE 13 – TESTES & GO LIVE (Dia 30)
+
+⬜ Testar:
+
+Cadastro
+
+Login
+
+Pagamento
+
+Admin
+
+Afiliado
+
+⬜ Testar fluxo completo real (valor pequeno)
+
+⬜ Ajustes finais de UI/UX
+
+⬜ GO LIVE 🚀
+
+🧠 REGRA DE OURO (Anota isso)
+
+Não avance de fase com algo quebrado.
+Melhor simples funcionando do que complexo parado.

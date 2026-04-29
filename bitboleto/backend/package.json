@@ -1,0 +1,62 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "deploy": "prisma generate && npm run build && echo 'Pronto! Agora execute: pm2 restart pagdepix-api'",
+    "start": "node dist/server.js",
+    "check-commerce": "ts-node scripts/check-commerce-migration.ts",
+    "apply-telegram-column": "ts-node scripts/apply-telegram-chat-id.ts",
+    "recalculate-total-paid": "ts-node scripts/recalculate-total-paid.ts",
+    "migrate-commerce-fees": "ts-node scripts/migrate-commerce-fees.ts",
+    "check-commerce-payments": "ts-node scripts/check-commerce-payments.ts",
+    "diagnose-commerce": "ts-node scripts/diagnose-commerce-payments.ts",
+    "check-swapverse": "ts-node scripts/check-swapverse-integration.ts",
+    "sync-commerce-status": "ts-node scripts/sync-commerce-status.ts",
+    "liberar-telegram": "ts-node scripts/liberar-telegram-verificacao.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "@sendgrid/mail": "^8.1.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/web-push": "^3.6.4",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^11.10.0",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "dayjs": "^1.11.19",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.0.2",
+    "node-telegram-bot-api": "^0.67.0",
+    "prisma": "^6.19.2",
+    "qrcode": "^1.5.4",
+    "resend": "^6.4.2",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^25.0.10",
+    "@types/qrcode": "^1.5.6",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  }
+}

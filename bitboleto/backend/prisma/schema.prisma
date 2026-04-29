@@ -1,0 +1,2043 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// ENUMS (SEMPRE NO TOPO)
+// ========================================
+enum Role {
+  USER
+  ADMIN
+  AFFILIATE
+  COMMERCE
+}
+
+enum BoletoStatus {
+  PENDING
+  PAID
+  PROBLEM
+  CANCELLED
+}
+
+enum MobileRechargeStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+enum PaymentCurrency {
+  DEPIX
+  USDT
+  BTC
+}
+
+enum PixCopiaColaStatus {
+  PENDING
+  TXID_SUBMITTED
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+// ========================================
+// MARKETPLACE - ENUMS
+// ========================================
+enum ProductCategory {
+  EBOOK
+  SOFTWARE
+  COURSE
+  DESIGN
+  GIFTCARD
+  OTHER
+  FOOD
+  LOCAL_SERVICE
+  HANDCRAFT
+}
+
+enum DeliveryType {
+  FILE
+  CODE
+  LINK
+  LOCAL
+}
+
+enum ProductStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  INACTIVE
+}
+
+enum PlatformNotificationType {
+  POPUP
+  BANNER
+}
+
+enum PlatformNotificationTarget {
+  ALL
+  ROLES
+  USERS
+}
+
+// Order status (marketplace)
+enum MarketOrderStatus {
+  CREATED
+  AWAITING_PAYMENT
+  PAID
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+  DISPUTED
+}
+
+enum SellerOrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+// ========================================
+// MODELS
+// ========================================
+model User {
+  id                String    @id @default(uuid())
+  name              String
+  email             String    @unique
+  telegram          String    @unique
+  passwordHash      String
+  role              Role      @default(USER)
+  isActive          Boolean   @default(true)
+  isBlocked         Boolean   @default(false)
+  emailVerified      Boolean   @default(false)
+  emailVerifyToken   String?
+  emailVerifyExpires DateTime?
+  passwordResetToken String?
+  passwordResetExpires DateTime?
+  telegramVerified     Boolean   @default(false)
+  telegramVerifyToken  String?
+  telegramVerifyExpires DateTime?
+  deviceFingerprint  String?
+  dailyLimit        Float     @default(500)
+  maxBoletoAmount   Float?    // null = padrão R$ 1.000; admin pode liberar valor maior por usuário
+  totalPaid         Float     @default(0)
+  lastLoginAt       DateTime?
+  lastLoginIp       String?
+  lastLoginCity     String?
+  lastLoginCountry  String?
+  lastLoginIsVpn    Boolean?  @default(false)
+  depixLiquidWallet String?   // Carteira Liquid salva
+  depixWalletNickname String? // Apelido do endereço salvo
+  telegramChatId    String?   // Chat ID do Telegram (salvo ao verificar no bot) para notificações
+  whatsapp          String?   // WhatsApp Brasil (+55) - contato administrativo apenas
+  nameVerified      Boolean   @default(false)  // Nome validado no cadastro
+  emailChangeCount  Int       @default(0)      // Troca de e-mail (máx 1 para usuários antigos)
+  emailChangePending String?  // Novo e-mail pendente de confirmação
+  emailChangeCode   String?   @db.VarChar(6)
+  emailChangeExpires DateTime?
+  referralCode      String?   @unique             // Código único de indicação do usuário
+  referredByCode    String?                       // Código de quem indicou este usuário
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  boletos      Boleto[]
+  mobileRecharges MobileRecharge[]
+  depixOrders  DepixOrder[]
+  affiliate    Affiliate?
+  referralEarnings  ReferralEarning[] @relation("ReferralEarner")
+  referralUsages    ReferralEarning[] @relation("ReferralSource")
+  boletoBatches     BoletoBatch[]
+  commercePartner CommercePartner?
+  commerceLinks   CommerceLink[]
+  commercePages   CommercePage[]
+  logs         Log[]
+  withdrawals  Withdrawal[]
+  couponUsages CouponUsage[]
+  accountCreations AccountCreation[]
+  supportTickets SupportTicket[]
+
+  // Marketplace - Vendedor
+  sellerProducts    Product[]            @relation("SellerProducts")
+  sellerOrders      MarketplaceOrder[]   @relation("SellerOrders")
+  sellerOrdersV2    SellerOrder[]        @relation("SellerOrders")
+  sellerCoupons     SellerCoupon[]
+  sellerBalance     SellerBalance?
+  sellerBalanceTransactions SellerBalanceTransaction[]
+  sellerWithdrawals SellerWithdrawal[]
+
+  // Marketplace - Comprador
+  buyerOrders       MarketplaceOrder[]   @relation("BuyerOrders")
+  buyerMarketOrders MarketOrder[]        @relation("BuyerMarketOrders")
+  cart              Cart?
+  wishlistItems     WishlistItem[]
+
+  // Marketplace - Notificações e Chat
+  orderNotifications OrderNotification[]
+  sellerOrderChatMessages SellerOrderChatMessage[]
+  reviews           ProductReview[]
+  reviewsV2         ProductReviewV2[]
+
+  // Marketplace - Admin
+  productsApproved  Product[]            @relation("ProductApprovals")
+  reviewsApproved   ProductReview[]      @relation("ReviewApprovals")
+  disputesResolved  MarketplaceOrder[]   @relation("DisputeResolver")
+  disputesResolvedSellerOrders SellerOrder[] @relation("SellerOrderDisputeResolver")
+  orderChatMessages OrderChatMessage[]
+  sendPixOrders     SendPixOrder[]
+  pixCopiaCola      PixCopiaCola[]
+  notificationViews PlatformNotificationView[]
+  pushSubscriptions  PushSubscription[]
+  userNotifications  UserNotification[]
+  pushPreference     UserPushPreference?
+}
+
+/** Sessão de verificação de email no cadastro (código 6 dígitos, 5 min, máx 3 tentativas) */
+model EmailVerificationRequest {
+  id        String   @id @default(uuid())
+  email     String   @unique @db.VarChar(255)
+  code      String   @db.VarChar(6)
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  verifiedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+model CommercePartner {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  documentType          String   @default("CNPJ") // CNPJ (CPF legado)
+  documentNumber        String   // apenas dígitos
+  businessName          String   @default("") // Nome comercial do negócio
+  businessType          String   // tipo de negócio
+  status                String   @default("AWAITING_DEPOSIT") // AWAITING_DEPOSIT | VALIDATING | APPROVED | REJECTED | SUSPENDED
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Validação CNPJ via Receita Federal
+  cnpjRazaoSocial       String?  // Razão social retornada pela consulta
+  cnpjSituacao          String?  // ATIVA, INAPTA, BAIXADA, etc.
+  cnpjValidatedAt       DateTime?
+
+  // Depósito inicial de validação (R$ 5,00)
+  initialDepositOrderId String?  // orderId na SwapVerse do depósito inicial
+  initialDepositStatus  String?  // pending | confirmed | failed
+  initialDepositCnpjOrigin String? // CNPJ de origem do Pix (para validação)
+  initialDepositAt      DateTime?
+
+  // Colateral e limites antifraude
+  collateralBalance     Float    @default(0) // saldo de colateral em R$
+  transactionLimit      Float    @default(500) // limite máximo por transação em R$
+  dailyPayerLimit       Float    @default(500) // limite máximo por pagador (CPF/CNPJ) por dia
+
+  // Taxas personalizadas (definidas pelo admin)
+  useCustomFees         Boolean  @default(false)
+  customFixedFee        Float?
+  customVariablePercent Float?
+
+  // Limites do comerciante (null = usar User.dailyLimit / ilimitado)
+  dailyLimitCommerce   Float?
+  monthlyLimitCommerce Float?
+
+  // Conta criada manualmente pelo admin (ignora CNPJ e depósito inicial)
+  createdByAdmin       Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settings CommerceSettings?
+  collateralDeposits CollateralDeposit[]
+  apiKeys CommerceApiKey[]
+  webhookEndpoints CommerceWebhookEndpoint[]
+  charges CommerceCharge[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([documentNumber])
+}
+
+model CollateralDeposit {
+  id          String   @id @default(uuid())
+  partnerId   String
+  type        String   // DEPOSIT | WITHDRAWAL
+  amount      Float
+  method      String?  // PIX | DEPIX
+  status      String   @default("PENDING") // PENDING | CONFIRMED | REJECTED | PROCESSED
+  orderId     String?  // SwapVerse orderId (para depósitos via Pix)
+  txid        String?  // TXID manual (para depósitos via DePix)
+  note        String?  // observação do admin
+  processedBy String?  // userId do admin que processou
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  partner CommercePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@index([status])
+  @@index([type])
+  @@map("collateral_deposits")
+}
+
+model CommerceSettings {
+  id                    String   @id @default(uuid())
+  partnerId             String   @unique
+  businessName          String?  // Nome do negócio (editável)
+  cnpj                  String?  // CNPJ opcional (formato: apenas dígitos)
+  logoUrl               String?  // URL da logo (upload ou URL externa)
+  primaryColor          String?  // Cor principal da marca (hex, ex: #FF6B00)
+  accentColor           String?  // Cor de destaque/accent (hex)
+  backgroundColor       String?  // Cor de fundo (hex)
+  textColor             String?  // Cor do texto (hex)
+  useCustomBranding     Boolean  @default(false) // Ativar/desativar identidade visual
+  contactPhone          String?  // Telefone de contato (opcional)
+  supportEmail          String?  // E-mail de suporte (opcional)
+  businessDescription   String?  // Descrição curta do negócio (opcional)
+  redirectUrl           String?  // URL de redirecionamento após pagamento bem-sucedido (opcional)
+  faviconUrl            String?  // URL do favicon (upload ou URL externa)
+  liquidWallet          String?  // Carteira Liquid do comerciante para receber pagamentos (DePix)
+  emailNotificationsEnabled Boolean @default(true) // Ativar/desativar notificações por email de pagamentos
+  storeSlug             String?  @unique @db.VarChar(50)
+  showCnpjOnStore       Boolean  @default(false)
+  showPhoneOnStore      Boolean  @default(false)
+  showEmailOnStore      Boolean  @default(false)
+  onboardingCompleted   Boolean  @default(false)
+  onboardingStep        Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  partner CommercePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+}
+
+
+model CommerceApiKey {
+  id            String    @id @default(uuid())
+  partnerId     String
+  label         String
+  keyHash       String    @unique
+  secretHash    String
+  keyPrefix     String    // prefixo para exibição (ex: bb_abc123...)
+  isSandbox     Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  ipWhitelist   String[]  @default([])
+  lastUsedAt    DateTime?
+  requestCount  Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  partner CommercePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+}
+
+model CommerceWebhookEndpoint {
+  id        String   @id @default(uuid())
+  partnerId String
+  url       String
+  events    String[] @default(["charge.paid"]) // charge.created, charge.paid, charge.expired
+  secret    String   // para assinatura HMAC
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  partner CommercePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+}
+
+model CommerceCharge {
+  id             String    @id @default(uuid())
+  partnerId      String
+  commerceLinkId String    @unique // 1:1 com link
+  amount         Float
+  description    String?
+  metadata       Json?
+  status         String    @default("pending") // pending | paid | expired | cancelled
+  depixOrderId   String?   // DepixOrder quando pago
+  expiresAt      DateTime?
+  paidAt         DateTime?
+  source         String    @default("link") // link | page | gateway
+  createdAt      DateTime  @default(now())
+
+  partner     CommercePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  commerceLink CommerceLink   @relation(fields: [commerceLinkId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@index([commerceLinkId])
+  @@index([source])
+}
+
+model CommerceLink {
+  id        String   @id @default(uuid())
+  userId    String   // dono do link (comerciante)
+  titulo    String   // nome ou identificação
+  amount    Float    // valor em R$
+  slug      String   @unique // URL: /pay/:slug
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments DepixOrder[]
+  charge  CommerceCharge?
+
+  @@index([userId])
+  @@index([slug])
+}
+
+model CommercePage {
+  id        String   @id @default(uuid())
+  userId    String   // dono da página (comerciante)
+  titulo    String   // nome ou identificação da página
+  slug      String   @unique // URL: /page/:slug
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments DepixOrder[]
+
+  @@index([userId])
+  @@index([slug])
+}
+
+model DepixOrder {
+  id                 String    @id @default(uuid())
+  userId             String
+  orderId            String    // ID do pedido na SwapVerse
+  amount             Float     // valor em DePix
+  totalToPay         Float     // valor pago em reais
+  status             String    @default("pending")
+  telegramNotifiedAt DateTime? // quando notificamos o usuário no Telegram (depix_sent)
+  emailNotifiedAt    DateTime? // quando enviamos email de notificação de pagamento (commerce)
+  commerceLinkId     String?   // pagamento via link de comércio (opcional)
+  commercePageId     String?   // pagamento via página de comércio (opcional)
+  // Identificação do pagador (exigência SwapVerse para transações > R$ 500)
+  payerName          String?   // nome completo do pagador
+  payerTaxNumber     String?   // CPF (11 dígitos) ou CNPJ (14 dígitos), apenas números
+  // Campos discriminados de taxas (modo comércio)
+  grossAmount        Float?    // valor bruto (antes das taxas) - para commerce
+  fixedFeePaid       Float?    // taxa fixa paga (R$ 0,99)
+  variableFeePaid    Float?    // taxa variável paga (0,5% do valor bruto)
+  pagdepixProfit     Float?    // lucro PagDepix (0,3% do valor bruto)
+  swapverseFee       Float?    // taxa SwapVerse (0,2% do valor bruto)
+  couponId           String?   // cupom usado (se houver)
+  affiliateId        String?   // afiliado associado (se cupom de afiliado foi usado)
+  createdAt          DateTime  @default(now())
+
+  user         User          @relation(fields: [userId], references: [id])
+  commerceLink CommerceLink? @relation(fields: [commerceLinkId], references: [id], onDelete: SetNull)
+  commercePage CommercePage? @relation(fields: [commercePageId], references: [id], onDelete: SetNull)
+  coupon       Coupon?       @relation(fields: [couponId], references: [id])
+  affiliate    Affiliate?    @relation(fields: [affiliateId], references: [id])
+  transactions AffiliateTransaction[]
+  @@index([userId])
+  @@index([createdAt])
+  @@index([commerceLinkId])
+  @@index([commercePageId])
+  @@index([couponId])
+  @@index([affiliateId])
+}
+
+model Boleto {
+  id            String       @id @default(uuid())
+  barcode       String?
+  pdfUrl        String?
+  pdfPassword   String?
+  amount        Float
+  fee           Float
+  totalAmount   Float
+  dueDate       DateTime
+  depixAmount   Float
+  walletAddress String
+  qrCode        String?
+  txid          String?      @unique
+  status        BoletoStatus @default(PENDING)
+  receiptUrl    String?
+  couponUsed    String?
+  couponId      String?
+  affiliateId   String?
+  problemReason String?
+  createdAt     DateTime     @default(now())
+  paidAt        DateTime?
+  confirmedAt   DateTime?
+
+  paymentCurrency   PaymentCurrency @default(DEPIX)
+  exchangeRate      Float?
+  cryptoAmount      String?
+  rateLockExpiresAt DateTime?
+  rateExpired       Boolean         @default(false)
+
+  apiKeyId    String?
+  externalRef String?
+  isSandbox   Boolean  @default(false)
+
+  userId  String
+  batchId String?
+  user    User        @relation(fields: [userId], references: [id])
+  batch   BoletoBatch? @relation("BoletoBatchItems", fields: [batchId], references: [id])
+
+  coupon    Coupon?    @relation(fields: [couponId], references: [id])
+  affiliate Affiliate? @relation("BoletoAffiliate", fields: [affiliateId], references: [id])
+  apiKey    ApiKey?    @relation(fields: [apiKeyId], references: [id])
+
+  transactions AffiliateTransaction[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([apiKeyId])
+  @@index([externalRef])
+  @@index([batchId])
+}
+
+model Affiliate {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  couponCode      String   @unique
+  balance         Float    @default(0)      // Disponível para saque
+  pendingBalance  Float    @default(0)     // Pendente (aguardando confirmação)
+  totalEarned     Float    @default(0)
+  liquidWallet    String?                  // Carteira Liquid para saque
+  lastWalletChange DateTime?            // Última alteração de carteira
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  totalPaid    Float    @default(0)
+
+  user         User                   @relation(fields: [userId], references: [id])
+  transactions AffiliateTransaction[]
+  coupons      Coupon[]
+  boletos      Boleto[]               @relation("BoletoAffiliate")
+  mobileRecharges MobileRecharge[]
+  depixOrders  DepixOrder[]
+  pixCopiaCola PixCopiaCola[]
+  withdrawals  Withdrawal[]
+  marketplaceOrders MarketplaceOrder[]
+  sellerOrders      SellerOrder[]
+  marketplaceCommissions AffiliateMarketplaceCommission[]
+  apiKeys      ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
+  apiConfig    AffiliateApiConfig?
+  apiEndUserLimits ApiEndUserLimit[]
+  payments     AffiliatePayment[]
+}
+
+model AffiliateMarketplaceCommission {
+  id             String   @id @default(uuid())
+  affiliateId    String
+  sellerOrderId  String
+  amount         Float
+  status         String   @default("PENDING") // PENDING, AVAILABLE, PAID
+  createdAt      DateTime @default(now())
+  availableAt    DateTime?
+
+  affiliate    Affiliate    @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  sellerOrder  SellerOrder  @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([affiliateId, sellerOrderId])
+  @@index([affiliateId])
+  @@index([sellerOrderId])
+  @@index([status])
+}
+
+model AffiliatePayment {
+  id          String    @id @default(uuid())
+  affiliateId String
+  affiliate   Affiliate @relation(fields: [affiliateId], references: [id])
+  amount      Float
+  txid        String?
+  receiptUrl  String?
+  notes       String?
+  adminId     String
+  paidAt      DateTime  @default(now())
+
+  @@index([affiliateId])
+  @@map("affiliate_payments")
+}
+
+model AffiliateTransaction {
+  id               String   @id @default(uuid())
+  affiliateId      String
+  boletoId         String?  // Opcional: pode ser boleto, recarga ou Depix
+  mobileRechargeId String?  // Opcional: para comissões de recargas
+  depixOrderId     String?  // Opcional: para comissões de Depix
+  pixCopiaColaId   String?  // Opcional: para comissões de Pix Copia e Cola
+  amount           Float
+  commission       Float
+  status           String   @default("PENDING") // PENDING, AVAILABLE, PAID
+  createdAt        DateTime @default(now())
+  availableAt      DateTime? // Quando ficou disponível (após confirmação do pagamento)
+
+  affiliate      Affiliate       @relation(fields: [affiliateId], references: [id])
+  boleto         Boleto?         @relation(fields: [boletoId], references: [id])
+  mobileRecharge MobileRecharge? @relation(fields: [mobileRechargeId], references: [id])
+  depixOrder     DepixOrder?     @relation(fields: [depixOrderId], references: [id])
+  pixCopiaCola   PixCopiaCola?   @relation(fields: [pixCopiaColaId], references: [id])
+
+  @@index([affiliateId, createdAt])
+  @@index([status])
+  @@index([boletoId])
+  @@index([mobileRechargeId])
+  @@index([depixOrderId])
+}
+
+model Coupon {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  discount    Float    @default(0.005)
+  commission  Float    @default(0.005)
+  affiliateId String?
+  isActive    Boolean  @default(true)
+  usageCount  Int      @default(0)
+  maxUsage    Int?     // null = ilimitado
+  createdAt   DateTime @default(now())
+
+  affiliate    Affiliate? @relation(fields: [affiliateId], references: [id])
+  boletos      Boleto[]
+  mobileRecharges MobileRecharge[]
+  depixOrders  DepixOrder[]
+  pixCopiaCola PixCopiaCola[]
+  couponUsages CouponUsage[]
+
+  @@index([code])
+}
+
+model Log {
+  id        String   @id @default(uuid())
+  action    String
+  details   String?
+  ip        String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
+
+model BlockedIp {
+  id        String    @id @default(uuid())
+  ip        String    @unique
+  reason    String
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@index([ip])
+}
+
+model Config {
+  id                   String    @id @default("config")
+  walletAddress        String    @default("lq1qqgskhge4cunhw32799ky9wlaavt83xu0klvvz78yg4ugzr3dmq2t0gm4gyfdr59yhaq7anhkg52ha666d0nkys56jh979wyp7")
+  qrCodeUrl            String    @default("/qr-code.png")
+  walletAddressUsdt    String?
+  qrCodeUrlUsdt        String?
+  walletAddressBtc     String?
+  qrCodeUrlBtc         String?
+  rateLockMinutes      Int       @default(10)
+  commerceWalletDepix  String?   // Carteira DePix do admin para receber colaterais
+  updatedAt            DateTime  @updatedAt
+  updatedBy            String?
+  maintenanceMode      Boolean   @default(false)
+  maintenanceMessage   String?
+  maintenanceUpdatedAt DateTime?
+  maintenanceUpdatedBy String?
+
+  @@map("config")
+}
+
+// ─── Email Campaigns ─────────────────────────────────────────────────────────
+
+enum EmailCampaignStatus {
+  DRAFT
+  SENDING
+  SENT
+  FAILED
+}
+
+enum EmailCampaignTarget {
+  ALL
+  ROLES
+  SEGMENT
+  USERS
+}
+
+model EmailCampaign {
+  id              String               @id @default(uuid())
+  name            String
+  subject         String
+  htmlBody        String               @db.Text
+  textBody        String?              @db.Text
+  fromName        String               @default("PagDepix")
+  targetType      EmailCampaignTarget  @default(ALL)
+  targetRoles     String[]             @default([])
+  targetUserIds   String[]             @default([])
+  targetSegment   String?
+  status          EmailCampaignStatus  @default(DRAFT)
+  sentAt          DateTime?
+  totalRecipients Int                  @default(0)
+  totalSent       Int                  @default(0)
+  totalFailed     Int                  @default(0)
+  totalOpened     Int                  @default(0)
+  createdBy       String
+  templateId      String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  logs EmailCampaignLog[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("email_campaigns")
+}
+
+model EmailCampaignLog {
+  id          String    @id @default(uuid())
+  campaignId  String
+  userId      String?
+  email       String
+  status      String    @default("pending")
+  sentAt      DateTime?
+  openedAt    DateTime?
+  failReason  String?   @db.Text
+  trackToken  String    @unique @default(uuid())
+
+  campaign EmailCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([trackToken])
+  @@map("email_campaign_logs")
+}
+
+model EmailTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  subject     String
+  htmlBody    String   @db.Text
+  isSystem    Boolean  @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("email_templates")
+}
+
+model EmailUnsubscribe {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  userId    String?
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@map("email_unsubscribes")
+}
+
+/** Comunicações internas - pop-ups e banners administrados pelo admin. */
+model PlatformNotification {
+  id             String                     @id @default(uuid())
+  title          String
+  body           String                     @db.Text
+  imageUrl       String?
+  buttonText     String?
+  buttonUrl      String?
+  type           PlatformNotificationType   @default(POPUP)
+  targetType     PlatformNotificationTarget @default(ALL)
+  targetRoles    String[]                   @default([])
+  targetUserIds  String[]                   @default([])
+  isActive       Boolean                    @default(true)
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  createdBy      String
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  views PlatformNotificationView[]
+
+  @@index([isActive, startsAt, expiresAt])
+  @@index([targetType])
+  @@map("platform_notifications")
+}
+
+/** Registro de visualizações e cliques em notificações. */
+model PlatformNotificationView {
+  id             String   @id @default(uuid())
+  notificationId String
+  userId         String
+  viewedAt       DateTime @default(now())
+  clickedAt      DateTime?
+
+  notification PlatformNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId])
+  @@index([notificationId])
+  @@map("platform_notification_views")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  email     String?
+  ip        String
+  success   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+  @@map("login_attempts")
+}
+
+model CouponUsage {
+  id              String   @id @default(uuid())
+  couponId        String
+  userId          String
+  userEmail       String
+  userTelegram    String
+  userIp          String
+  deviceFingerprint String?
+  boletoId        String?  // opcional quando for uso em Receber Pix
+  depixOrderId    String?  // ID do pedido SwapVerse quando for Receber Pix
+  createdAt       DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([couponId, createdAt])
+  @@index([userEmail, createdAt])
+  @@index([userTelegram, createdAt])
+  @@index([userIp, createdAt])
+  @@index([deviceFingerprint, createdAt])
+}
+
+model AccountCreation {
+  id              String   @id @default(uuid())
+  userId          String
+  ip              String
+  deviceFingerprint String?
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([ip, createdAt])
+  @@index([deviceFingerprint, createdAt])
+  @@index([createdAt])
+}
+
+model Withdrawal {
+  id            String   @id @default(uuid())
+  affiliateId  String
+  userId        String   // Para facilitar queries
+  amount        Float
+  liquidWallet  String
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED, PAID
+  adminNotes    String?
+  createdAt     DateTime @default(now())
+  processedAt   DateTime?
+
+  affiliate Affiliate @relation(fields: [affiliateId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+  geradepix GeradepixWithdrawal?
+
+  @@index([affiliateId, status])
+  @@index([status, createdAt])
+}
+
+/** Saques Depix→Pix via GeraDePix. Liga um Withdrawal a um saque na API GeraDePix. */
+model GeradepixWithdrawal {
+  id                   String   @id @default(uuid())
+  withdrawalId         String   @unique
+  geradepixWithdrawalId String  // ID retornado pela API GeraDePix
+  amountBrl            Float
+  pixKey               String
+  pixKeyType           String?
+  depositAddress       String
+  depositAmount        Float    // Quantidade de Depix a enviar
+  expiration           DateTime
+  status               String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | EXPIRED
+  createdAt            DateTime @default(now())
+  completedAt          DateTime?
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalId])
+  @@index([geradepixWithdrawalId])
+  @@index([status])
+  @@map("geradepix_withdrawals")
+}
+
+/** Pedidos de Enviar Pix (Depix→Pix) - qualquer usuário. Via GeraDePix. */
+model SendPixOrder {
+  id                    String   @id @default(uuid())
+  userId                String
+  amountBrl             Float
+  pixKey                String
+  pixKeyType            String?
+  geradepixWithdrawalId String?
+  depositAddress        String?
+  depositAmount         Float?
+  depositAmountExact    String?  // Valor exato retornado pela API GeraDePix (evita arredondamento)
+  expiration            DateTime?
+  status                String   @default("PENDING") // PENDING | COMPLETED | FAILED | EXPIRED | CANCELED | REFUNDED
+  statusDetail          String?  // Mensagem adicional (erro, motivo, etc)
+  receiptUrl            String?  // Comprovante GeraDePix (quando COMPLETED)
+  receiptStoredPath     String?  // Caminho local do PDF quando baixado e salvo (ex: send-pix-receipts/orderId.pdf)
+  createdAt             DateTime @default(now())
+  completedAt           DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([geradepixWithdrawalId])
+  @@map("send_pix_orders")
+}
+
+model MobileRecharge {
+  id            String               @id @default(uuid())
+  userId        String
+  operator      String               // Vivo, Claro, TIM, Correios Celular, Surf Telecom
+  phoneNumber   String               // +55 DDD + número (normalizado, imutável após PAID)
+  amount        Float                // Valor da recarga (R$)
+  fee           Float                // 2% + 0,99
+  totalAmount   Float                // amount + fee
+  depixAmount   Float
+  walletAddress String
+  status        MobileRechargeStatus @default(PENDING)
+  txid          String?   @unique    // TXID da transação (enviado pelo usuário)
+  receiptUrl    String?              // Comprovante de liquidação (enviado pelo admin ao aprovar)
+  affiliateId   String?
+  couponUsed    String?
+  couponId      String?
+  createdAt     DateTime             @default(now())
+  paidAt        DateTime?
+
+  paymentCurrency   PaymentCurrency  @default(DEPIX)
+  exchangeRate      Float?
+  cryptoAmount      String?
+  rateLockExpiresAt DateTime?
+  rateExpired       Boolean          @default(false)
+
+  apiKeyId    String?
+  externalRef String?
+  isSandbox   Boolean  @default(false)
+
+  user      User       @relation(fields: [userId], references: [id])
+  affiliate Affiliate? @relation(fields: [affiliateId], references: [id])
+  coupon    Coupon?    @relation(fields: [couponId], references: [id])
+  apiKey    ApiKey?    @relation(fields: [apiKeyId], references: [id])
+  transactions AffiliateTransaction[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([apiKeyId])
+  @@index([externalRef])
+}
+
+model PixCopiaCola {
+  id               String             @id @default(uuid())
+  userId           String
+  codigoPix        String
+  valorOriginal    Float
+  taxa             Float
+  valorTaxa        Float
+  totalFinal       Float
+  nomeDestinatario String
+
+  contatoTelegram  String?
+  contatoEmail     String?
+  contatoWhatsApp  String?
+
+  cupomUsado       String?
+  cupomId          String?
+
+  paymentCurrency  PaymentCurrency    @default(DEPIX)
+  walletAddress    String
+  txid             String?            @unique
+  comprovante      String?
+
+  status           PixCopiaColaStatus @default(PENDING)
+  adminNotes       String?
+
+  affiliateId      String?
+  apiKeyId         String?
+  externalRef      String?
+  isSandbox        Boolean            @default(false)
+
+  exchangeRate      Float?
+  cryptoAmount      String?
+  rateLockExpiresAt DateTime?
+  rateExpired       Boolean           @default(false)
+
+  user      User       @relation(fields: [userId], references: [id])
+  coupon    Coupon?    @relation(fields: [cupomId], references: [id])
+  affiliate Affiliate? @relation(fields: [affiliateId], references: [id])
+  apiKey    ApiKey?    @relation(fields: [apiKeyId], references: [id])
+  transactions AffiliateTransaction[]
+
+  createdAt        DateTime           @default(now())
+  txidSubmittedAt  DateTime?
+  processedAt      DateTime?
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([apiKeyId])
+  @@index([externalRef])
+  @@map("pix_copia_cola")
+}
+
+// ========================================
+// SUPORTE / CHAT
+// ========================================
+model SupportTicket {
+  id        String   @id @default(uuid())
+  userId    String
+  status    String   @default("OPEN")   // OPEN | IN_PROGRESS | RESOLVED
+  priority  String?  @default("NORMAL") // LOW | NORMAL | HIGH
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages SupportMessage[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SupportMessage {
+  id        String   @id @default(uuid())
+  ticketId  String
+  senderId  String   // userId (cliente) ou id do admin (atendente)
+  isStaff   Boolean  @default(false)
+  content   String
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+// ========================================
+// MARKETPLACE - CATEGORIAS
+// ========================================
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @db.VarChar(100)
+  slug        String    @unique @db.VarChar(120)
+  parentId    String?
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  displayOrder Int      @default(0)
+  createdAt   DateTime  @default(now())
+
+  products    Product[]
+
+  @@index([parentId])
+}
+
+// ========================================
+// MARKETPLACE - PRODUTOS
+// ========================================
+
+model Product {
+  id                        String          @id @default(uuid())
+  sellerId                  String
+  seller                    User            @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  title                     String          @db.VarChar(200)
+  slug                      String          @unique @db.VarChar(250)
+  description               String          @db.Text
+  category                  ProductCategory
+  categoryId                String?
+  categoryRef               Category?       @relation(fields: [categoryId], references: [id])
+
+  priceInDepix              Float
+
+  coverImageUrl             String?         @db.VarChar(500)
+
+  deliveryType              DeliveryType
+  deliveryLink              String?         @db.VarChar(500)
+
+  sku                       String?         @db.VarChar(50)
+  stock                     Int             @default(0)
+  stockReserved             Int             @default(0)
+
+  videoUrl                  String?         @db.VarChar(500)
+  downloadLimit             Int?            @default(3)
+
+  isAdultContent            Boolean         @default(false)
+  isReusable                Boolean         @default(true)
+  localDeliveryMode         String?
+  localDeliveryZones        Json?
+  localDeliveryCep          String?         @db.VarChar(8)
+
+  allowAffiliates           Boolean         @default(false)
+  affiliateCommissionPercent Float          @default(0)
+
+  status                    ProductStatus   @default(PENDING_APPROVAL)
+  approvedAt                DateTime?
+  approvedBy                String?
+  approvedByUser            User?           @relation("ProductApprovals", fields: [approvedBy], references: [id])
+  rejectionReason           String?         @db.Text
+  adminAdjustmentRequest    String?         @db.Text
+
+  viewCount                 Int             @default(0)
+  purchaseCount             Int             @default(0)
+  totalRevenue              Float           @default(0)
+  averageRating             Float?
+  reviewCount               Int             @default(0)
+
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  files                     ProductFile[]
+  codes                     ProductCode[]
+  images                    ProductImage[]
+  variants                  ProductVariant[]
+  orders                    MarketplaceOrder[]
+  orderItems                OrderItem[]
+  reviews                   ProductReview[]
+  reviewsV2                 ProductReviewV2[]
+  coupons                   SellerCoupon[]
+  cartItems                 CartItem[]
+  wishlistItems             WishlistItem[]
+
+  @@index([sellerId, status])
+  @@index([category, status])
+  @@index([categoryId])
+  @@index([slug])
+  @@index([createdAt])
+}
+
+model ProductImage {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url         String   @db.VarChar(500)
+  position    Int      @default(0)
+  isCover     Boolean  @default(false)
+  altText     String?  @db.VarChar(200)
+  createdAt   DateTime @default(now())
+
+  @@index([productId])
+}
+
+model ProductVariant {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String   @db.VarChar(100)
+  sku         String?  @db.VarChar(50)
+  priceInDepix Float
+  stock       Int      @default(0)
+  stockReserved Int    @default(0)
+  createdAt   DateTime @default(now())
+
+  options    VariantOption[]
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+
+  @@index([productId])
+}
+
+model VariantOption {
+  id          String         @id @default(uuid())
+  variantId   String
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  optionKey   String         @db.VarChar(50)
+  optionValue String         @db.VarChar(100)
+  createdAt   DateTime       @default(now())
+
+  @@index([variantId])
+}
+
+model ProductReviewV2 {
+  id              String    @id @default(uuid())
+  orderItemId     String    @unique
+  orderItem       OrderItem @relation(fields: [orderItemId], references: [id])
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+  rating          Int
+  comment         String?   @db.Text
+  isApproved      Boolean   @default(false)
+  approvedAt      DateTime?
+  approvedBy      String?
+  rejectionReason String?   @db.Text
+  createdAt       DateTime  @default(now())
+
+  @@index([productId])
+  @@index([userId])
+}
+
+// ========================================
+// MARKETPLACE - WISHLIST
+// ========================================
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@index([productId])
+}
+
+// ========================================
+// MARKETPLACE - CARRINHO
+// ========================================
+
+model Cart {
+  id        String    @id @default(uuid())
+  buyerId   String
+  buyer     User      @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items     CartItem[]
+
+  @@unique([buyerId])
+  @@index([buyerId])
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  @@index([cartId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+// ========================================
+// MARKETPLACE - PEDIDO GLOBAL (MULTI-VENDEDOR)
+// ========================================
+
+model MarketOrder {
+  id                String           @id @default(uuid())
+  buyerId           String
+  buyer             User             @relation("BuyerMarketOrders", fields: [buyerId], references: [id])
+
+  totalAmount       Float
+  swapverseOrderId  String?          @unique @db.VarChar(100)
+  paymentStatus     String           @default("pending")
+  paidAt            DateTime?
+  orderStatus       MarketOrderStatus @default(CREATED)
+
+  globalCouponId    String?
+  globalCoupon      GlobalCoupon?    @relation(fields: [globalCouponId], references: [id])
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  sellerOrders      SellerOrder[]
+  cancellations     OrderCancellation[]
+  notifications     OrderNotification[]
+
+  @@index([buyerId])
+  @@index([paymentStatus])
+  @@index([orderStatus])
+  @@index([createdAt])
+}
+
+model SellerOrder {
+  id                    String    @id @default(uuid())
+  marketOrderId         String
+  marketOrder           MarketOrder @relation(fields: [marketOrderId], references: [id], onDelete: Cascade)
+  sellerId              String
+  seller                User      @relation("SellerOrders", fields: [sellerId], references: [id])
+
+  subtotal              Float
+  platformFixedFee      Float     @default(0)
+  affiliateCommission   Float     @default(0)
+  couponDiscount        Float     @default(0)
+  sellerReceives        Float
+
+  status                SellerOrderStatus @default(PENDING)
+  settlementStatus      String    @default("pending")
+  settlementAvailableAt DateTime?
+  settlementPaidAt      DateTime?
+
+  disputeStatus               String?
+  disputeReason               String?   @db.Text
+  disputeOpenedAt             DateTime?
+  disputeSellerResponse       String?   @db.Text
+  disputeSellerRespondedAt    DateTime?
+  disputeResolvedAt           DateTime?
+  disputeResolvedBy           String?
+  disputeResolver             User?     @relation("SellerOrderDisputeResolver", fields: [disputeResolvedBy], references: [id])
+  disputeAdminNotes           String?   @db.Text
+
+  sellerCouponId        String?
+  affiliateId           String?
+  affiliate             Affiliate?    @relation(fields: [affiliateId], references: [id])
+  affiliateCommissions  AffiliateMarketplaceCommission[]
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  items                 OrderItem[]
+  chatMessages          SellerOrderChatMessage[]
+  returnRequests        ReturnRequest[]
+
+  @@index([marketOrderId])
+  @@index([sellerId])
+  @@index([status])
+  @@index([settlementStatus])
+}
+
+model OrderItem {
+  id              String       @id @default(uuid())
+  sellerOrderId   String
+  sellerOrder     SellerOrder  @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product      @relation(fields: [productId], references: [id])
+  variantId       String?
+  variant         ProductVariant? @relation(fields: [variantId], references: [id])
+  quantity        Int
+  unitPrice       Float
+
+  deliveryStatus  String       @default("pending")
+  deliveredAt     DateTime?
+  deliveredCode   String?      @db.VarChar(500)
+  downloadLink    String?      @db.Text
+  downloadLinkExpiry DateTime?
+  downloadCount   Int          @default(0)
+  downloadLimit   Int          @default(3)
+
+  createdAt       DateTime     @default(now())
+
+  review          ProductReviewV2?
+  usedCodes       ProductCode[]
+
+  @@index([sellerOrderId])
+  @@index([productId])
+}
+
+// ========================================
+// ORDER CANCELLATION
+// ========================================
+
+model OrderCancellation {
+  id            String    @id @default(uuid())
+  marketOrderId String
+  marketOrder   MarketOrder @relation(fields: [marketOrderId], references: [id], onDelete: Cascade)
+  reason        String    @db.Text
+  status        String    @default("PENDING")
+  requestedBy   String
+  approvedBy    String?
+  refundAmount  Float?
+  refundedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([marketOrderId])
+}
+
+// ========================================
+// NOTIFICATIONS
+// ========================================
+
+model OrderNotification {
+  id            String    @id @default(uuid())
+  marketOrderId String?
+  marketOrder   MarketOrder? @relation(fields: [marketOrderId], references: [id], onDelete: SetNull)
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          String    @db.VarChar(50)
+  channel       String    @default("email") @db.VarChar(20)
+  title         String    @db.VarChar(200)
+  body          String?   @db.Text
+  readAt        DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId])
+  @@index([marketOrderId])
+  @@index([type])
+}
+
+// ========================================
+// RETURN REQUEST
+// ========================================
+
+model ReturnRequest {
+  id            String      @id @default(uuid())
+  sellerOrderId String
+  sellerOrder   SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  orderItemId   String?
+  reason        String      @db.Text
+  status        String      @default("PENDING")
+  refundAmount  Float?
+  approvedBy    String?
+  refundedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([sellerOrderId])
+}
+
+// ========================================
+// CHAT POR SELLER ORDER
+// ========================================
+
+model SellerOrderChatMessage {
+  id              String      @id @default(uuid())
+  sellerOrderId   String
+  sellerOrder     SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  senderId        String
+  sender          User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  messageType     String      @default("TEXT") @db.VarChar(20)
+  content         String?     @db.Text
+  attachmentPath  String?     @db.VarChar(500)
+  attachmentName  String?     @db.VarChar(255)
+  attachmentSize  Int?
+  attachmentMime  String?     @db.VarChar(100)
+  attachmentExpiresAt DateTime?
+  isFromAdmin     Boolean     @default(false)
+  adminIntervention Boolean   @default(false)
+  readAt          DateTime?
+  createdAt       DateTime    @default(now())
+
+  @@index([sellerOrderId])
+  @@index([senderId])
+}
+
+// ========================================
+// AUDIT LOG
+// ========================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  entityType  String   @db.VarChar(50)
+  entityId    String   @db.VarChar(100)
+  action      String   @db.VarChar(50)
+  userId      String?
+  details     Json?
+  ip          String?
+  userAgent   String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ========================================
+// FRAUD FLAG
+// ========================================
+
+model FraudFlag {
+  id          String   @id @default(uuid())
+  userId      String?
+  orderId     String?
+  type        String   @db.VarChar(50)
+  severity    String   @default("medium") @db.VarChar(20)
+  details     Json?
+  resolved    Boolean  @default(false)
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([type])
+}
+
+// ========================================
+// MARKETPLACE FEE CONFIG
+// ========================================
+
+model MarketplaceFeeConfig {
+  id              String   @id @default(uuid())
+  sellerTier      String?  @db.VarChar(50)
+  categoryId      String?
+  percentage      Float    @default(0.005)
+  fixedFee        Float    @default(0.99)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([sellerTier])
+  @@index([categoryId])
+}
+
+// ========================================
+// GLOBAL COUPON (Plataforma)
+// ========================================
+
+model GlobalCoupon {
+  id            String    @id @default(uuid())
+  code          String    @unique @db.VarChar(50)
+  discountPercent Float?
+  discountFixed   Float?
+  maxUsage      Int?
+  usageCount    Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  marketOrders  MarketOrder[]
+
+  @@index([code])
+}
+
+
+// ========================================
+// LEGACY MarketplaceOrder (manter compatibilidade)
+// ========================================
+
+model ProductFile {
+  id                String    @id @default(uuid())
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  filename          String    @db.VarChar(255)
+  originalFilename  String    @db.VarChar(255)
+  filePath          String    @db.VarChar(500)
+  fileSize          BigInt
+  mimeType          String?   @db.VarChar(100)
+
+  fileHash          String?   @db.VarChar(64)
+  virusScanStatus   String    @default("pending")
+  virusScanResult   String?   @db.Text
+  virusScanAt       DateTime?
+
+  uploadedAt        DateTime  @default(now())
+
+  @@index([productId])
+}
+
+model ProductCode {
+  id                String             @id @default(uuid())
+  productId         String
+  product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  code              String             @db.VarChar(500)
+  isUsed            Boolean            @default(false)
+  usedByOrderId     String?
+  usedByOrder       MarketplaceOrder?  @relation(fields: [usedByOrderId], references: [id])
+  usedByOrderItemId String?
+  usedByOrderItem   OrderItem?         @relation(fields: [usedByOrderItemId], references: [id])
+  usedAt            DateTime?
+
+  createdAt         DateTime           @default(now())
+
+  @@index([productId, isUsed])
+  @@index([usedByOrderItemId])
+}
+
+model MarketplaceOrder {
+  id                    String    @id @default(uuid())
+  buyerId               String
+  buyer                 User      @relation("BuyerOrders", fields: [buyerId], references: [id])
+  productId             String
+  product               Product   @relation(fields: [productId], references: [id])
+  sellerId              String
+  seller                User      @relation("SellerOrders", fields: [sellerId], references: [id])
+
+  productPrice          Float
+  platformFee           Float
+  platformFixedFee      Float
+  affiliateCommission   Float     @default(0)
+  couponDiscount        Float     @default(0)
+  finalPrice            Float
+  sellerReceives        Float
+
+  swapverseOrderId      String?   @unique @db.VarChar(100)
+  paymentStatus         String    @default("pending")
+  paidAt                DateTime?
+
+  deliveryStatus        String    @default("pending")
+  deliveredAt           DateTime?
+  deliveredCode         String?   @db.VarChar(500)
+  downloadLink          String?   @db.Text
+  downloadLinkExpiry    DateTime?
+  downloadCount         Int       @default(0)
+  downloadLimit         Int       @default(3)
+
+  disputeStatus         String?
+  disputeReason         String?   @db.Text
+  disputeOpenedAt       DateTime?
+  disputeResolvedAt     DateTime?
+  disputeResolvedBy     String?
+  disputeResolver       User?     @relation("DisputeResolver", fields: [disputeResolvedBy], references: [id])
+  disputeAdminNotes     String?   @db.Text
+
+  settlementStatus      String    @default("pending")
+  settlementAvailableAt DateTime?
+  settlementPaidAt      DateTime?
+
+  couponId              String?
+  coupon                SellerCoupon? @relation(fields: [couponId], references: [id])
+  affiliateId           String?
+  affiliate             Affiliate?    @relation(fields: [affiliateId], references: [id])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  usedCodes             ProductCode[]
+  review                ProductReview?
+  chatMessages          OrderChatMessage[]
+
+  @@index([buyerId, paymentStatus])
+  @@index([sellerId, settlementStatus])
+  @@index([productId])
+  @@index([paymentStatus])
+  @@index([settlementStatus])
+  @@index([disputeStatus])
+  @@index([createdAt])
+}
+
+model OrderChatMessage {
+  id              String           @id @default(uuid())
+  orderId         String
+  order           MarketplaceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  senderId        String
+  sender          User             @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  messageType     String           @default("TEXT") @db.VarChar(20)
+  content         String?          @db.Text
+  attachmentPath  String?          @db.VarChar(500)
+  attachmentName  String?          @db.VarChar(255)
+  attachmentSize  Int?
+  attachmentMime  String?          @db.VarChar(100)
+
+  isFromAdmin     Boolean          @default(false)
+  adminIntervention Boolean        @default(false)
+
+  createdAt       DateTime         @default(now())
+
+  @@index([orderId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+model ProductReview {
+  id              String             @id @default(uuid())
+  productId       String
+  product         Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User               @relation(fields: [userId], references: [id])
+  orderId         String             @unique
+  order           MarketplaceOrder   @relation(fields: [orderId], references: [id])
+
+  rating          Int
+  comment         String?            @db.Text
+
+  isApproved      Boolean            @default(false)
+  approvedAt      DateTime?
+  approvedBy      String?
+  approvedByUser  User?              @relation("ReviewApprovals", fields: [approvedBy], references: [id])
+  rejectionReason String?            @db.Text
+
+  createdAt       DateTime           @default(now())
+
+  @@index([productId, isApproved])
+  @@index([userId])
+}
+
+model SellerCoupon {
+  id              String    @id @default(uuid())
+  sellerId        String
+  seller          User      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  productId       String?
+  product         Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  code            String    @unique @db.VarChar(50)
+  discountPercent Float
+
+  isActive        Boolean   @default(true)
+  usageCount      Int       @default(0)
+  maxUsage        Int?
+  expiresAt       DateTime?
+
+  createdAt       DateTime  @default(now())
+
+  orders          MarketplaceOrder[]
+
+  @@index([sellerId])
+  @@index([code, isActive])
+}
+
+model MarketplaceBanner {
+  id                  String    @id @default(uuid())
+
+  desktopImageUrl     String    @db.VarChar(500)
+  desktopLinkType     String    @db.VarChar(20)
+  desktopLinkTarget   String?   @db.VarChar(500)
+
+  mobileImageUrl      String    @db.VarChar(500)
+  mobileLinkType      String    @db.VarChar(20)
+  mobileLinkTarget    String?   @db.VarChar(500)
+
+  isActive            Boolean   @default(true)
+  displayOrder        Int       @default(0)
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([isActive, displayOrder])
+}
+
+model SellerBalance {
+  id              String    @id @default(uuid())
+  sellerId        String    @unique
+  seller          User      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  availableBalance Float    @default(0)
+  pendingBalance   Float    @default(0)
+  lockedBalance   Float    @default(0)
+  totalEarned     Float    @default(0)
+
+  liquidWallet    String?   @db.VarChar(100)
+  lastWalletChange DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([sellerId])
+}
+
+model SellerBalanceTransaction {
+  id            String   @id @default(uuid())
+  sellerId      String
+  seller        User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  type          String   @db.VarChar(50)   // SALE_CREDIT, WITHDRAWAL, ADJUSTMENT, REFUND, FEE
+  amount        Float
+  balanceAfter  Float?
+  referenceType String?  @db.VarChar(50)   // SellerOrder, SellerWithdrawal, etc.
+  referenceId   String?
+  description   String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  @@index([sellerId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+model SellerWithdrawal {
+  id            String    @id @default(uuid())
+  sellerId      String
+  seller        User      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  amount        Float
+  liquidWallet  String    @db.VarChar(100)
+
+  status        String    @default("PENDING")
+  adminNotes    String?   @db.Text
+  txid          String?   @db.VarChar(64)
+
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+
+  @@index([sellerId, status])
+  @@index([status, createdAt])
+}
+
+// ========================================
+// API WHITE-LABEL
+// ========================================
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  affiliateId String
+  label       String
+  keyHash     String   @unique
+  secretHash  String
+  keyPrefix   String
+  isSandbox   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  suspendedAt DateTime?
+  suspendedReason String?
+  ipWhitelist String[]
+  rateLimit   Int      @default(60)
+  lastUsedAt  DateTime?
+  requestCount Int     @default(0)
+  createdAt   DateTime @default(now())
+
+  affiliate    Affiliate      @relation(fields: [affiliateId], references: [id])
+  boletos      Boleto[]
+  recharges    MobileRecharge[]
+  pixCopiaCola PixCopiaCola[]
+  webhookEndpoints WebhookEndpoint[]
+  apiRequestLogs   ApiRequestLog[]
+
+  @@index([keyHash])
+  @@index([affiliateId])
+  @@map("api_keys")
+}
+
+model WebhookEndpoint {
+  id          String   @id @default(uuid())
+  affiliateId String
+  apiKeyId    String
+  url         String
+  secret      String
+  events      String[]
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  affiliate  Affiliate          @relation(fields: [affiliateId], references: [id])
+  apiKey     ApiKey             @relation(fields: [apiKeyId], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@index([affiliateId])
+  @@index([apiKeyId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id             String   @id @default(uuid())
+  endpointId     String
+  event          String
+  transactionId  String?  // Para deduplicação e auditoria
+  payload        String
+  responseStatus Int?
+  responseBody   String?
+  attempts       Int      @default(0)
+  maxAttempts    Int      @default(5)
+  nextRetryAt    DateTime?
+  deliveredAt    DateTime?
+  failedAt       DateTime?
+  createdAt      DateTime @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id])
+
+  @@index([endpointId])
+  @@index([event])
+  @@index([nextRetryAt])
+  @@index([endpointId, event, transactionId])
+  @@map("webhook_deliveries")
+}
+
+model ApiRequestLog {
+  id        String   @id @default(uuid())
+  apiKeyId  String
+  method    String
+  path      String
+  statusCode Int
+  ip        String
+  userAgent String?
+  duration  Int
+  createdAt DateTime @default(now())
+
+  apiKey ApiKey @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId, createdAt])
+  @@index([createdAt])
+  @@map("api_request_logs")
+}
+
+// ========================================
+// CACHE
+// ========================================
+
+model ExchangeRateCache {
+  id        String   @id @default("rates")
+  usdBrl    Float
+  btcBrl    Float
+  btcUsd    Float
+  fetchedAt DateTime
+
+  @@map("exchange_rate_cache")
+}
+
+// ========================================
+// AFFILIATE API CONFIG
+// ========================================
+
+model AffiliateApiConfig {
+  id                      String    @id @default(uuid())
+  affiliateId             String    @unique
+
+  // Status de integração (nível do afiliado, não por chave)
+  status                  String    @default("inactive")
+  // inactive | beta | active | blocked
+
+  // Limites
+  globalDailyLimitPerUser Float     @default(1000.00)  // Limite diário POR usuário final
+  maxDailyVolumeAffiliate Float?                       // Limite TOTAL diário do afiliado (null = sem limite)
+
+  // Timestamps de auditoria
+  activatedAt             DateTime?
+  activatedByAdminId      String?
+  activatedByAdminEmail   String?
+
+  blockedAt               DateTime?
+  blockedReason           String?
+  blockedByAdminId        String?
+  blockedByAdminEmail     String?
+
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  affiliate               Affiliate @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("affiliate_api_configs")
+}
+
+// ========================================
+// API END USER LIMIT
+// ========================================
+
+model ApiEndUserLimit {
+  id                  String    @id @default(uuid())
+  affiliateId         String
+
+  // Identificador do usuário no sistema do afiliado (CPF, externalRef, email, etc.)
+  userRef             String
+
+  // Limite personalizado (null = usa globalDailyLimitPerUser do AffiliateApiConfig)
+  dailyLimit          Float?
+  customLimitReason   String?
+
+  // Bloqueio
+  isActive            Boolean   @default(true)
+  blockedReason       String?
+  blockedAt           DateTime?
+  blockedByAdminId    String?
+  blockedByAdminEmail String?
+
+  // Tracking de uso (reseta diariamente via cron)
+  usedToday           Float     @default(0)
+  lastUsageDate       String?   // YYYY-MM-DD
+  usedThisMonth       Float     @default(0)
+  monthResetDate      String?   // YYYY-MM
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  affiliate           Affiliate @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  @@unique([affiliateId, userRef])
+  @@index([affiliateId])
+  @@index([lastUsageDate])
+  @@map("api_end_user_limits")
+}
+
+// ========================================
+// REFERRAL — Programa de Indicação
+// ========================================
+model ReferralEarning {
+  id           String   @id @default(cuid())
+  earnerId     String
+  earner       User     @relation("ReferralEarner", fields: [earnerId], references: [id])
+  sourceUserId String
+  sourceUser   User     @relation("ReferralSource", fields: [sourceUserId], references: [id])
+  boletoId       String?
+  rechargeId     String?
+  pixCopiaColaId String?
+  feeAmount      Float    // Taxa que o indicado pagou
+  commission   Float    // 40% da taxa — crédito do indicador
+  status       String   @default("AVAILABLE")
+  createdAt    DateTime @default(now())
+
+  @@index([earnerId])
+  @@index([sourceUserId])
+  @@map("referral_earnings")
+}
+
+// ========================================
+// BOLETO BATCH — Pagamento unificado de múltiplos boletos
+// ========================================
+model BoletoBatch {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  itemCount       Int                        // quantidade de boletos
+  totalBoletos    Float                      // soma dos valores dos boletos (sem taxas)
+  totalFee        Float                      // soma das taxas
+  grandTotal      Float                      // totalBoletos + totalFee (valor a pagar em crypto)
+  walletAddress   String?
+  qrCode          String?
+  paymentCurrency String   @default("DEPIX")
+  cryptoAmount    String?                    // valor exato em crypto (precisão de string)
+  depixAmount     Float?
+  exchangeRate    Float?
+  rateLockExpiresAt DateTime?
+  couponCode      String?
+  status          String   @default("PENDING") // PENDING | PAID | CANCELLED | PROBLEM
+  txid            String?  @unique
+  receiptUrl      String?
+  createdAt       DateTime @default(now())
+  paidAt          DateTime?
+  confirmedAt     DateTime?
+
+  boletos         Boleto[] @relation("BoletoBatchItems")
+
+  @@index([userId])
+  @@index([status])
+  @@map("boleto_batches")
+}
+
+// ========================================
+// WEB PUSH NOTIFICATIONS
+// ========================================
+
+/** Assinaturas Web Push de dispositivos dos usuários. */
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+/** Histórico de notificações por usuário (central de notificações). */
+model UserNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("user_notifications")
+}
+
+model UserPushPreference {
+  userId    String   @id
+  status    String   @default("default")
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_push_preferences")
+}

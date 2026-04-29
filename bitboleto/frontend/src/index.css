@@ -1,0 +1,427 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Theme Variables ────────────────────────────────────────────── */
+:root {
+  /* Light mode — banking clean white */
+  --app-bg:          #f0f2f5;
+  --app-surface:     #ffffff;
+  --app-elevated:    #f6f8fa;
+  --app-stroke:      #e2e6ea;
+  --app-text:        #1a1f2e;
+  --app-text-muted:  #5a6478;
+  --app-text-subtle: #9aa3b2;
+}
+
+.dark {
+  /* Dark mode — professional fintech dark */
+  --app-bg:          #0d1117;
+  --app-surface:     #161b22;
+  --app-elevated:    #1c2128;
+  --app-stroke:      #30363d;
+  --app-text:        #e6edf3;
+  --app-text-muted:  #8b949e;
+  --app-text-subtle: #484f58;
+}
+
+html {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+body {
+  margin: 0;
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-10px); }
+  75% { transform: translateX(10px); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.6s ease-out;
+}
+
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+/* Ticker de cotações — rolagem contínua */
+@keyframes ticker-marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Versão usada inline na Landing (33.33% para triplicado) */
+@keyframes ticker {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-33.33%); }
+}
+
+@keyframes gradient-x {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.ticker-wrap {
+  overflow: hidden;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ticker-content {
+  display: inline-flex;
+  animation: ticker 30s linear infinite;
+}
+
+.ticker-content:hover {
+  animation-play-state: paused;
+}
+
+.animate-ticker {
+  animation: ticker 30s linear infinite;
+}
+
+.animate-ticker:hover {
+  animation-play-state: paused;
+}
+
+.animate-gradient-x {
+  animation: gradient-x 3s ease infinite;
+  background-size: 200% 200%;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-content,
+  .animate-ticker,
+  .animate-gradient-x,
+  .animate-pulse-slow,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none;
+  }
+}
+
+/* Sidebar (Dashboard pessoal) — scroll personalizado */
+.sidebar-nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(247, 147, 26, 0.4) transparent;
+}
+.sidebar-nav-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar-nav-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-nav-scroll::-webkit-scrollbar-thumb {
+  background: rgba(247, 147, 26, 0.35);
+  border-radius: 4px;
+}
+.sidebar-nav-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(247, 147, 26, 0.6);
+}
+
+/* Animações para página de sucesso do pagamento */
+@keyframes success-bounce {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) translateY(-50px);
+  }
+  50% {
+    transform: scale(1.1) translateY(0);
+  }
+  70% {
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes checkmark-draw {
+  0% {
+    stroke-dashoffset: 100;
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(-100vh) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+@keyframes sparkle {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-success-bounce {
+  animation: success-bounce 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.animate-checkmark {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: checkmark-draw 0.8s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-confetti {
+  animation: confetti-fall 3s linear forwards;
+}
+
+.animate-sparkle {
+  animation: sparkle 1.5s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Transição de background para sucesso */
+@keyframes bg-success-transition {
+  0% { 
+    background-color: #111827;
+    background-image: none;
+  }
+  100% { 
+    background-color: #10b981;
+    background-image: linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%);
+  }
+}
+.bg-payment-success {
+  animation: bg-success-transition 1s ease-out forwards;
+}
+
+/* Confetti em tela cheia */
+@keyframes confetti-explosion {
+  0% {
+    transform: translateY(0) rotate(0deg) scale(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(var(--rotation, 720deg)) scale(1);
+    opacity: 0;
+  }
+}
+.confetti-fullscreen {
+  position: fixed;
+  width: 10px;
+  height: 10px;
+  animation: confetti-explosion var(--duration, 3s) ease-out forwards;
+}
+
+/* Ondas expansivas */
+@keyframes ripple-wave {
+  0% {
+    transform: scale(0);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+.success-ripple {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  border: 4px solid #10b981;
+  transform: translate(-50%, -50%);
+  animation: ripple-wave 1.5s ease-out;
+  pointer-events: none;
+}
+
+/* Raios de luz */
+@keyframes light-ray {
+  0% {
+    transform: rotate(var(--rotation, 0deg)) scaleY(0);
+    opacity: 0;
+  }
+  50% { opacity: 1; }
+  100% {
+    transform: rotate(var(--rotation, 0deg)) scaleY(1);
+    opacity: 0;
+  }
+}
+.light-ray {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 50vh;
+  background: linear-gradient(to bottom, rgba(16, 185, 129, 0.8), transparent);
+  transform-origin: top center;
+  animation: light-ray 2s ease-out forwards;
+  pointer-events: none;
+}
+
+/* Chuva de moedas */
+@keyframes coin-rain {
+  0% {
+    transform: translateY(-100vh) rotateY(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotateY(1080deg);
+    opacity: 0.3;
+  }
+}
+.coin-rain {
+  position: fixed;
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(45deg, #fbbf24, #f59e0b);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+  animation: coin-rain var(--duration, 4s) linear forwards;
+  animation-delay: var(--delay, 0s);
+  pointer-events: none;
+}
+.coin-rain::before {
+  content: '$';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  color: #78350f;
+  font-size: 18px;
+}
+
+/* Partículas de brilho */
+@keyframes sparkle-float {
+  0% {
+    transform: translateY(0) scale(0);
+    opacity: 0;
+  }
+  50% { opacity: 1; }
+  100% {
+    transform: translateY(-150px) scale(1);
+    opacity: 0;
+  }
+}
+.sparkle-particle {
+  position: fixed;
+  width: 6px;
+  height: 6px;
+  background: #fbbf24;
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  animation: sparkle-float 2s ease-out forwards;
+  animation-delay: var(--delay, 0s);
+  pointer-events: none;
+}
+
+/* Flash de sucesso */
+@keyframes success-flash {
+  0% { opacity: 0; }
+  50% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+.success-flash-overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.9), rgba(16, 185, 129, 0.3));
+  pointer-events: none;
+  animation: success-flash 0.5s ease-out;
+  z-index: 9999;
+}
+
+/* Pulso de energia no card */
+@keyframes card-success-transform {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 60px rgba(16, 185, 129, 0.6);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 40px rgba(16, 185, 129, 0.4);
+  }
+}
+.card-success {
+  animation: card-success-transform 0.8s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-content { animation-duration: 60s; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
