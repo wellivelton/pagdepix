@@ -6,6 +6,7 @@ const telegramService = require('../services/telegram.service') as { notifyUserB
 const notifyUserByTelegram = telegramService.notifyUserByTelegram ?? (async () => {});
 
 import { dispatchWebhook } from '../services/webhookService';
+import { env } from '../config/env';
 import { notifyBoletoApproved, notifyAffiliateCommission, notifyWithdrawalProcessed } from '../services/push.service';
 
 // Re-exportar funções de manutenção (definidas em maintenanceController para evitar dependência circular)
@@ -39,7 +40,7 @@ export const getWalletConfig = async (req: Request, res: Response) => {
       config = await prisma.config.create({
         data: {
           id: 'config',
-          walletAddress: process.env.LIQUID_WALLET_ADDRESS || 'lq1qqgskhge4cunhw32799ky9wlaavt83xu0klvvz78yg4ugzr3dmq2t0gm4gyfdr59yhaq7anhkg52ha666d0nkys56jh979wyp7',
+          walletAddress: env.LIQUID_WALLET_ADDRESS,
           qrCodeUrl: '/qr-code.png'
         }
       });
@@ -597,6 +598,61 @@ export const approveBoleto = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Erro ao aprovar boleto:', error);
     return res.status(500).json({ error: 'Erro interno ao aprovar boleto' });
+  }
+};
+
+// ========================================
+// PAGAR BOLETO VIA ASAAS
+// ========================================
+export const payBoletoViaAsaas = async (req: Request, res: Response) => {
+  try {
+    const id = paramId(req.params.id);
+    // @ts-ignore
+    const adminId = req.userId;
+
+    const admin = await prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin || admin.role !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
+
+    const boleto = await prisma.boleto.findUnique({
+      where: { id },
+      include: { user: { select: { id: true, name: true, email: true, telegram: true } } },
+    });
+    if (!boleto) return res.status(404).json({ error: 'Boleto não encontrado' });
+    if (boleto.status !== 'PENDING') return res.status(400).json({ error: `Boleto já está ${boleto.status}.` });
+    if (!boleto.barcode) return res.status(400).json({ error: 'Boleto sem código de barras — não é possível pagar via Asaas.' });
+
+    const { asaasPayBill } = await import('../services/asaas.service');
+    const result = await asaasPayBill(
+      boleto.barcode,
+      boleto.amount,
+      `PagDepix Boleto #${boleto.id.slice(0, 8)}`
+    );
+
+    if (!result.success) return res.status(400).json({ error: result.error });
+
+    // Approve the boleto in our system
+    const appUrl = (process.env.APP_URL || process.env.BACKEND_URL || 'https://api.pagdepix.com').replace(/\/$/, '');
+    await prisma.boleto.update({
+      where: { id },
+      data: {
+        status: 'PAID',
+        paidAt: new Date(),
+        receiptUrl: result.transactionReceiptUrl || null,
+        adminNotes: `Pago via Asaas${result.id ? ` (ID: ${result.id})` : ''}`,
+      } as any,
+    });
+
+    const { notifyAdmin } = await import('../services/telegram.service');
+    notifyAdmin(
+      `✅ *Boleto pago via Asaas* #${boleto.id.slice(0, 8)}\n` +
+      `💰 R$ ${boleto.amount.toFixed(2)} · ${boleto.user?.name}\n` +
+      `Asaas ID: ${result.id ?? 'N/A'}`
+    ).catch(() => {});
+
+    return res.json({ success: true, receiptUrl: result.transactionReceiptUrl });
+  } catch (error) {
+    console.error('Erro ao pagar boleto via Asaas:', error);
+    return res.status(500).json({ error: 'Erro interno' });
   }
 };
 

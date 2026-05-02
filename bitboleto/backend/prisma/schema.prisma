@@ -26,6 +26,7 @@ enum BoletoStatus {
 
 enum MobileRechargeStatus {
   PENDING
+  PROCESSING
   PAID
   CANCELLED
 }
@@ -39,9 +40,12 @@ enum PaymentCurrency {
 enum PixCopiaColaStatus {
   PENDING
   TXID_SUBMITTED
+  VELORA_PROCESSING  // Velora payment initiated — intermediate state for crash recovery
+  ASAAS_PROCESSING   // Asaas payment initiated — intermediate state for crash recovery
   APPROVED
   REJECTED
   EXPIRED
+  CANCELLED
 }
 
 // ========================================
@@ -475,6 +479,8 @@ model Boleto {
   cryptoAmount      String?
   rateLockExpiresAt DateTime?
   rateExpired       Boolean         @default(false)
+
+  liquidAddressIndex Int?
 
   apiKeyId    String?
   externalRef String?
@@ -932,6 +938,10 @@ model MobileRecharge {
   externalRef String?
   isSandbox   Boolean  @default(false)
 
+  asaasRechargeId    String?
+  asaasStatus        String?
+  liquidAddressIndex Int?    @unique
+
   user      User       @relation(fields: [userId], references: [id])
   affiliate Affiliate? @relation(fields: [affiliateId], references: [id])
   coupon    Coupon?    @relation(fields: [couponId], references: [id])
@@ -948,10 +958,10 @@ model PixCopiaCola {
   id               String             @id @default(uuid())
   userId           String
   codigoPix        String
-  valorOriginal    Float
-  taxa             Float
-  valorTaxa        Float
-  totalFinal       Float
+  valorOriginal    Decimal  @db.Decimal(12, 2)
+  taxa             Decimal  @db.Decimal(8, 6)
+  valorTaxa        Decimal  @db.Decimal(12, 2)
+  totalFinal       Decimal  @db.Decimal(12, 2)
   nomeDestinatario String
 
   contatoTelegram  String?
@@ -962,6 +972,7 @@ model PixCopiaCola {
   cupomId          String?
 
   paymentCurrency  PaymentCurrency    @default(DEPIX)
+  taxaFixa         Decimal            @default("2.5") @db.Decimal(5, 2)
   walletAddress    String
   txid             String?            @unique
   comprovante      String?
@@ -974,10 +985,20 @@ model PixCopiaCola {
   externalRef      String?
   isSandbox        Boolean            @default(false)
 
-  exchangeRate      Float?
+  exchangeRate      Decimal? @db.Decimal(18, 8)
   cryptoAmount      String?
   rateLockExpiresAt DateTime?
   rateExpired       Boolean           @default(false)
+
+  veloraExternalId  String?
+  veloraStatus      String?
+  paidViaVelora     Boolean           @default(false)
+
+  asaasExternalId   String?
+  asaasStatus       String?
+  paidViaAsaas      Boolean           @default(false)
+
+  liquidAddressIndex Int?             @unique
 
   user      User       @relation(fields: [userId], references: [id])
   coupon    Coupon?    @relation(fields: [cupomId], references: [id])
@@ -988,6 +1009,8 @@ model PixCopiaCola {
   createdAt        DateTime           @default(now())
   txidSubmittedAt  DateTime?
   processedAt      DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?
 
   @@index([userId, status])
   @@index([status, createdAt])
@@ -1979,7 +2002,8 @@ model BoletoBatch {
   depixAmount     Float?
   exchangeRate    Float?
   rateLockExpiresAt DateTime?
-  couponCode      String?
+  couponCode         String?
+  liquidAddressIndex Int?   @unique
   status          String   @default("PENDING") // PENDING | PAID | CANCELLED | PROBLEM
   txid            String?  @unique
   receiptUrl      String?

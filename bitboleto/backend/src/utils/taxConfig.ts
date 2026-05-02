@@ -140,19 +140,33 @@ export const formatCurrency = (value: number): string =>
   `R$ ${value.toFixed(2).replace('.', ',')}`;
 
 // ========================================
-// PIX COPIA E COLA — TAXA PLANA
+// PIX COPIA E COLA — R$2,50 fixo + 3% variável
 // ========================================
+// Coupons ONLY discount the 3% variable portion — never the R$2,50 fixed fee.
+// The fixed fee covers the Velora QRCODE_CASH_OUT cost (R$2,50 per payment).
+export const PCC_FIXED_FEE = 2.50;
 export const PIX_COPIA_COLA_FEE_PERCENT = 0.03;
 export const MIN_PIX_COPIA_COLA_AMOUNT = 20.00;
 
 export function calculatePixCopiaColaFee(
   amount: number,
-  couponDiscountFraction = 0
-): { taxa: number; valorTaxa: number; totalFinal: number } {
-  const effectiveFee = PIX_COPIA_COLA_FEE_PERCENT * (1 - Math.min(Math.max(couponDiscountFraction, 0), 1));
-  const valorTaxa = Math.ceil(amount * effectiveFee * 100) / 100;
+  couponDiscountFraction = 0,
+): {
+  taxa: number;
+  taxaFixa: number;
+  taxaVariavel: number;
+  valorTaxa: number;
+  totalFinal: number;
+} {
+  const effectivePercent = PIX_COPIA_COLA_FEE_PERCENT * (1 - Math.min(Math.max(couponDiscountFraction, 0), 1));
+  const taxaFixa = PCC_FIXED_FEE;
+  // 3% applied on (amount + fixed fee) so base already includes the fixed cost
+  const taxaVariavel = Math.ceil((amount + taxaFixa) * effectivePercent * 100) / 100;
+  const valorTaxa = parseFloat((taxaFixa + taxaVariavel).toFixed(2));
   return {
-    taxa: effectiveFee,
+    taxa: effectivePercent,
+    taxaFixa,
+    taxaVariavel,
     valorTaxa,
     totalFinal: parseFloat((amount + valorTaxa).toFixed(2)),
   };
