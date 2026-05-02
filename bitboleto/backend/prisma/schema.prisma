@@ -814,6 +814,7 @@ model CouponUsage {
   deviceFingerprint String?
   boletoId        String?  // opcional quando for uso em Receber Pix
   depixOrderId    String?  // ID do pedido SwapVerse quando for Receber Pix
+  pixCopiaColaId  String?  // ID do pedido Pix Copia e Cola
   createdAt       DateTime @default(now())
 
   coupon Coupon @relation(fields: [couponId], references: [id])

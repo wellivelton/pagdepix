@@ -19,6 +19,17 @@
   handler ainda tem o "fail-open" em validateTelegramWebhook — corrigir num
   bloco futuro de hardening
 
+## Limite de cupom por IP/device inoperante em PCC
+
+- Arquivo: pixCopiaCola.ts (adminProcessPixCopiaCola)
+- Comportamento atual: CouponUsage criada para PCC com userIp='' (vazio)
+- Consequência: limite por IP em validateCouponUsage não funciona para PCC,
+  mesmo após Bug A ter sido corrigido (limite por email/telegram funciona)
+- Solução: passar req.ip do controller até createPixCopiaCola e
+  adminProcessPixCopiaCola, armazenar em PixCopiaCola.userIp como novo campo
+  (mudança de schema)
+- Ação: Bloco 6 (médios) ou bloco dedicado a antifraud
+
 ## webhook GeraDePix sem rate limit
 - Endpoint: POST /webhook/geradepix
 - Risco: DoS por flood de webhooks falsos sem custo para o atacante

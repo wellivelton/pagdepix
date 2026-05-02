@@ -350,8 +350,8 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
     let liquidAddressIndex: number | null = null;
     if (AUTO_MODE_CURRENCIES.has(currency) && autoMode && isXpubConfigured()) {
       try {
-        const xpub = process.env.LIQUID_XPUB!;
-        const masterBlindingKey = process.env.LIQUID_MASTER_BLINDING_KEY!;
+        const xpub = env.LIQUID_XPUB;
+        const masterBlindingKey = env.LIQUID_MASTER_BLINDING_KEY;
         liquidAddressIndex = await getNextAddressIndex(prisma);
         walletAddress = deriveLiquidAddress(xpub, masterBlindingKey, liquidAddressIndex);
       } catch (err) {
@@ -361,37 +361,81 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
       }
     }
 
-    const record = await (prisma as any).pixCopiaCola.create({
-      data: {
-        userId,
-        codigoPix: codigoPixTrim,
-        valorOriginal: numValor,
-        taxa,
-        valorTaxa,
-        totalFinal,
-        nomeDestinatario: nomeDestinatarioTrim,
-        contatoTelegram: contatoTelegram?.trim() || null,
-        contatoEmail: contatoEmail?.trim() || null,
-        contatoWhatsApp: contatoWhatsApp?.trim() || null,
-        cupomUsado: couponUsed,
-        cupomId: couponId,
-        paymentCurrency: currency,
-        taxaFixa,
-        walletAddress,
-        status: 'PENDING',
-        affiliateId,
-        apiKeyId: apiKeyId || null,
-        externalRef: externalRef || null,
-        isSandbox,
-        exchangeRate,
-        cryptoAmount,
-        rateLockExpiresAt,
-        liquidAddressIndex,
-      },
-      include: {
-        user: { select: { id: true, name: true, email: true, telegram: true } }
+    // Retry loop handles the rare P2002 collision on liquidAddressIndex.
+    // P2002 aborts the PostgreSQL transaction so the entire $transaction call must be retried;
+    // we cannot catch-and-continue from inside the callback.
+    const MAX_INDEX_RETRIES = 3;
+    let record: any;
+    for (let attempt = 0; attempt <= MAX_INDEX_RETRIES; attempt++) {
+      try {
+        record = await (prisma as any).$transaction(async (tx: any) => {
+          // Lock the coupon row for the duration of this transaction to prevent concurrent
+          // requests from exhausting the same coupon between our pre-check and INSERT.
+          if (couponId) {
+            const rows: any[] = await tx.$queryRaw`
+              SELECT id, "usageCount", "maxUsage", "isActive"
+              FROM "Coupon"
+              WHERE id = ${couponId}
+              FOR UPDATE
+            `;
+            const coupon = rows[0];
+            if (!coupon?.isActive) throw new Error('COUPON_INACTIVE');
+            if (coupon.maxUsage != null && coupon.usageCount >= coupon.maxUsage) throw new Error('COUPON_EXHAUSTED');
+          }
+
+          return tx.pixCopiaCola.create({
+            data: {
+              userId,
+              codigoPix: codigoPixTrim,
+              valorOriginal: numValor,
+              taxa,
+              valorTaxa,
+              totalFinal,
+              nomeDestinatario: nomeDestinatarioTrim,
+              contatoTelegram: contatoTelegram?.trim() || null,
+              contatoEmail: contatoEmail?.trim() || null,
+              contatoWhatsApp: contatoWhatsApp?.trim() || null,
+              cupomUsado: couponUsed,
+              cupomId: couponId,
+              paymentCurrency: currency,
+              taxaFixa,
+              walletAddress,
+              status: 'PENDING',
+              affiliateId,
+              apiKeyId: apiKeyId || null,
+              externalRef: externalRef || null,
+              isSandbox,
+              exchangeRate,
+              cryptoAmount,
+              rateLockExpiresAt,
+              liquidAddressIndex,
+            },
+            include: {
+              user: { select: { id: true, name: true, email: true, telegram: true } },
+            },
+          });
+        }, { timeout: 5000 });
+        break;
+      } catch (err: any) {
+        if (err?.message === 'COUPON_EXHAUSTED') return { success: false, error: 'Cupom esgotado. Tente outro cupom ou prossiga sem desconto.' };
+        if (err?.message === 'COUPON_INACTIVE') return { success: false, error: 'Cupom inativo.' };
+        if (err?.code === 'P2002' && liquidAddressIndex !== null && attempt < MAX_INDEX_RETRIES) {
+          // Unique constraint on liquidAddressIndex — derive a fresh index and retry.
+          try {
+            const xpub = env.LIQUID_XPUB;
+            const masterBlindingKey = env.LIQUID_MASTER_BLINDING_KEY;
+            liquidAddressIndex = await getNextAddressIndex(prisma);
+            walletAddress = deriveLiquidAddress(xpub, masterBlindingKey, liquidAddressIndex);
+          } catch (hdErr) {
+            console.error('[LiquidHD] Failed to get new index on retry:', hdErr);
+            liquidAddressIndex = null;
+            walletAddress = pickWallet(walletConfig, currency);
+          }
+          continue;
+        }
+        throw err;
       }
-    });
+    }
 
     return { success: true, pixCopiaCola: serializePcc(record) };
   } catch (e) {
@@ -558,77 +602,63 @@ export async function adminProcessPixCopiaCola(
   });
 
   if (!record) return { success: false, error: 'Solicitação não encontrada.' };
-  if (!['TXID_SUBMITTED', 'VELORA_PROCESSING'].includes(record.status)) {
+  if (!['TXID_SUBMITTED', 'VELORA_PROCESSING', 'ASAAS_PROCESSING'].includes(record.status)) {
     return { success: false, error: 'Só é possível processar solicitações com TXID informado.' };
   }
 
-  // Atomic guard: prevents double-approval under concurrent calls (reconcile job + admin UI race).
-  // updateMany returns count=0 if status already changed (e.g., another process won the race).
-  const claimed = await (prisma as any).pixCopiaCola.updateMany({
-    where: { id, status: { in: ['TXID_SUBMITTED', 'VELORA_PROCESSING'] } },
-    data: {
-      status: action,
-      adminNotes: adminNotes?.trim() || null,
-      processedAt: new Date(),
-      ...(comprovanteAdminUrl ? { comprovante: comprovanteAdminUrl } : {}),
-    },
-  });
-  if (claimed.count === 0) {
-    console.warn(`[adminProcessPixCopiaCola] Order ${id} already processed by concurrent call — skipping.`);
-    return { success: false, error: 'Pedido já foi processado.' };
-  }
+  // Captured inside the transaction for use in notifications after commit.
+  let referralNotification: { earnerId: string; commission: number } | null = null;
 
-  const updated = await (prisma as any).pixCopiaCola.findUnique({
-    where: { id },
-    include: {
-      user: { select: { id: true, name: true, email: true, telegram: true, telegramChatId: true } }
-    }
-  });
+  try {
+    await (prisma as any).$transaction(async (tx: any) => {
+      // Atomic claim — prevents double-approval under concurrent calls.
+      // Moved inside the transaction so claim + all secondary writes are atomic.
+      const claimed = await tx.pixCopiaCola.updateMany({
+        where: { id, status: { in: ['TXID_SUBMITTED', 'VELORA_PROCESSING', 'ASAAS_PROCESSING'] } },
+        data: {
+          status: action,
+          adminNotes: adminNotes?.trim() || null,
+          processedAt: new Date(),
+          ...(comprovanteAdminUrl ? { comprovante: comprovanteAdminUrl } : {}),
+        },
+      });
+      if (claimed.count === 0) throw new Error('PCC_ALREADY_PROCESSED');
 
-  if (action === 'APPROVED') {
-    // Atualizar totalPaid do usuário
-    await prisma.user.update({
-      where: { id: record.userId },
-      data: { totalPaid: { increment: Number(record.totalFinal) } }
-    });
+      if (action !== 'APPROVED') return;
 
-    // Comissão de indicação (referral)
-    try {
-      const owner = await prisma.user.findUnique({ where: { id: record.userId }, select: { referredByCode: true } });
+      await tx.user.update({
+        where: { id: record.userId },
+        data: { totalPaid: { increment: Number(record.totalFinal) } },
+      });
+
+      // Comissão de indicação (referral)
+      const owner = await tx.user.findUnique({ where: { id: record.userId }, select: { referredByCode: true } });
       if (owner?.referredByCode) {
-        const referrer = await prisma.user.findUnique({ where: { referralCode: owner.referredByCode }, select: { id: true } });
+        const referrer = await tx.user.findUnique({ where: { referralCode: owner.referredByCode }, select: { id: true } });
         if (referrer) {
           const referralCommission = Math.floor(Number(record.valorTaxa) * REFERRAL_RATE * 100) / 100;
-          await (prisma as any).referralEarning.create({
+          await tx.referralEarning.create({
             data: {
               earnerId: referrer.id,
               sourceUserId: record.userId,
               pixCopiaColaId: record.id,
               feeAmount: Number(record.valorTaxa),
               commission: referralCommission,
-            }
+            },
           });
-          try { const { notifyAffiliateCommission } = require('./push.service'); notifyAffiliateCommission(referrer.id, referralCommission).catch(() => {}); } catch (_e) {}
-          try { const { notifyUserByTelegram } = require('./telegram.service'); notifyUserByTelegram(referrer.id, `🎉 Nova comissão de indicação!\n\nVocê ganhou R$ ${referralCommission.toFixed(2)} pela aprovação de um Pix Copia e Cola do seu indicado.`).catch(() => {}); } catch (_e) {}
+          referralNotification = { earnerId: referrer.id, commission: referralCommission };
         }
       }
-    } catch (err) {
-      console.error('[PIX-COPIA-COLA] Erro ao criar comissão referral:', err);
-    }
 
-    // Comissão de afiliado
-    if (record.affiliateId) {
-      try {
-        const existingTx = await prisma.affiliateTransaction.findFirst({
-          where: { affiliateId: record.affiliateId, pixCopiaColaId: record.id }
+      // Comissão de afiliado
+      if (record.affiliateId) {
+        const existingAffiliateTx = await tx.affiliateTransaction.findFirst({
+          where: { affiliateId: record.affiliateId, pixCopiaColaId: record.id },
         });
-
-        if (!existingTx) {
-          // Comissão: 1% do valor principal (split: afiliado 1%, plataforma 2%)
+        if (!existingAffiliateTx) {
           const commissionAmount = Math.floor(Number(record.valorOriginal) * 0.01 * 100) / 100;
-
           if (commissionAmount > 0) {
-            await prisma.affiliateTransaction.create({
+            await tx.affiliateTransaction.create({
               data: {
                 affiliateId: record.affiliateId,
                 pixCopiaColaId: record.id,
@@ -636,32 +666,67 @@ export async function adminProcessPixCopiaCola(
                 commission: commissionAmount,
                 status: 'AVAILABLE',
                 availableAt: new Date(),
-              }
+              },
             });
-
-            await prisma.affiliate.update({
+            await tx.affiliate.update({
               where: { id: record.affiliateId },
               data: {
                 balance: { increment: commissionAmount },
                 totalEarned: { increment: commissionAmount },
-              }
+              },
             });
           }
         }
-
-        // Incrementar usageCount do cupom
-        if (record.cupomId) {
-          await prisma.coupon.update({
-            where: { id: record.cupomId },
-            data: { usageCount: { increment: 1 } }
-          });
-        }
-      } catch (err) {
-        console.error('[PIX-COPIA-COLA] Erro ao criar comissão afiliado:', err);
       }
+
+      // Bug B fix: usageCount increment is outside affiliateId block — coupon usage
+      // is independent of whether an affiliate was involved.
+      if (record.cupomId) {
+        await tx.coupon.update({
+          where: { id: record.cupomId },
+          data: { usageCount: { increment: 1 } },
+        });
+      }
+
+      // Bug A fix: CouponUsage was never created for PCC orders — per-user daily
+      // limit enforcement in validateCouponUsage was therefore inoperative for PCC.
+      if (record.cupomId) {
+        await tx.couponUsage.create({
+          data: {
+            couponId: record.cupomId,
+            userId: record.userId,
+            userEmail: record.user?.email ?? '',
+            userTelegram: record.user?.telegram ?? '',
+            userIp: '', // TODO: capture IP at PCC creation time and store on the PCC record
+            pixCopiaColaId: record.id,
+          },
+        });
+      }
+    }, { isolationLevel: 'Serializable', timeout: 10000 });
+  } catch (err: any) {
+    if (err?.message === 'PCC_ALREADY_PROCESSED') {
+      console.warn(`[adminProcessPixCopiaCola] Order ${id} already processed by concurrent call — skipping.`);
+      return { success: false, error: 'Pedido já foi processado.' };
+    }
+    throw err;
+  }
+
+  const updated = await (prisma as any).pixCopiaCola.findUnique({
+    where: { id },
+    include: {
+      user: { select: { id: true, name: true, email: true, telegram: true, telegramChatId: true } },
+    },
+  });
+
+  if (action === 'APPROVED') {
+    // Referral notifications fire after transaction commit — cannot roll back anyway.
+    // Capture in const so TypeScript can narrow the type correctly.
+    const notif = referralNotification as { earnerId: string; commission: number } | null;
+    if (notif) {
+      try { const { notifyAffiliateCommission } = require('./push.service'); notifyAffiliateCommission(notif.earnerId, notif.commission).catch(() => {}); } catch (_e) {}
+      try { notifyUserByTelegram(notif.earnerId, `🎉 Nova comissão de indicação!\n\nVocê ganhou R$ ${notif.commission.toFixed(2)} pela aprovação de um Pix Copia e Cola do seu indicado.`).catch(() => {}); } catch (_e) {}
     }
 
-    // Notificar usuário (push)
     try {
       const frontendUrl = process.env.FRONTEND_URL || 'https://pagdepix.com';
       await sendNotification(record.userId, {
@@ -674,7 +739,6 @@ export async function adminProcessPixCopiaCola(
       console.error('[PIX-COPIA-COLA] Erro ao enviar push (aprovação):', err);
     }
 
-    // Notificar usuário (Telegram)
     try {
       await notifyUserByTelegram(
         record.userId,
@@ -687,7 +751,6 @@ export async function adminProcessPixCopiaCola(
       console.error('[PIX-COPIA-COLA] Erro ao notificar usuário (Telegram):', err);
     }
 
-    // Webhook para afiliado (API)
     if (record.apiKeyId) {
       dispatchWebhook('pix.approved', record.id, 'pix-copia-cola', {
         valorOriginal: record.valorOriginal,
@@ -702,7 +765,6 @@ export async function adminProcessPixCopiaCola(
       }, record.apiKeyId, record.isSandbox).catch(() => {});
     }
   } else {
-    // REJECTED — notificar usuário
     try {
       const frontendUrl = process.env.FRONTEND_URL || 'https://pagdepix.com';
       await sendNotification(record.userId, {
@@ -729,7 +791,6 @@ export async function adminProcessPixCopiaCola(
       console.error('[PIX-COPIA-COLA] Erro ao notificar usuário rejeição (Telegram):', err);
     }
 
-    // Webhook para afiliado (API)
     if (record.apiKeyId) {
       dispatchWebhook('pix.refused', record.id, 'pix-copia-cola', {
         valorOriginal: record.valorOriginal,
