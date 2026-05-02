@@ -175,6 +175,7 @@ import {
   adminCancelAllPending,
 } from '../services/pixCopiaCola';
 import { veloraDecodePixCode } from '../services/velora.service';
+import { ensureIdempotent, updateResult } from '../services/webhookIdempotency.service';
 import { asaasDecodePixCode } from '../services/asaas.service';
 import { getMaintenanceStatusPublic, getAdminMaintenance, setMaintenance } from '../controllers/maintenanceController';
 import { dispatchWebhook } from '../services/webhookService';
@@ -1530,20 +1531,38 @@ router.post('/webhook/velora', async (req: any, res) => {
     return res.status(401).json({ error: 'Assinatura inválida.' });
   }
 
-  res.status(200).json({ ok: true });
-
   try {
     const body = req.body as any;
     const event: string = body?.event || '';
     const externalId: string = body?.externalId || body?.data?.externalId || '';
     const newStatus: string = body?.status || body?.data?.status || event;
 
-    if (!externalId) return;
+    if (!externalId) {
+      return res.status(200).json({ ok: true });
+    }
+
+    // Idempotency check before any side effects (HMAC already verified above).
+    const idResult = await ensureIdempotent({
+      source: 'velora',
+      eventType: newStatus || 'unknown',
+      externalId,
+      payload: body,
+    });
+
+    if (idResult.alreadyProcessed) {
+      console.log(`[VELORA-WEBHOOK] Duplicate ${newStatus}/${externalId} — skipping`);
+      return res.status(200).json({ ok: true, duplicate: true });
+    }
+
+    res.status(200).json({ ok: true });
 
     const record = await (prisma as any).pixCopiaCola.findFirst({
       where: { veloraExternalId: externalId },
     });
-    if (!record) return;
+    if (!record) {
+      await updateResult({ source: 'velora', eventType: newStatus || 'unknown', externalId, result: 'ok' }).catch(() => {});
+      return;
+    }
 
     await (prisma as any).pixCopiaCola.update({
       where: { id: record.id },
@@ -1551,6 +1570,7 @@ router.post('/webhook/velora', async (req: any, res) => {
     });
 
     console.log(`[VELORA-WEBHOOK] ${event} para PCC ${record.id} (Velora: ${externalId})`);
+    await updateResult({ source: 'velora', eventType: newStatus || 'unknown', externalId, result: 'ok' }).catch(() => {});
   } catch (err) {
     console.error('[VELORA-WEBHOOK] Erro:', err);
   }

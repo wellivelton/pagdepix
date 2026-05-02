@@ -1,0 +1,26 @@
+# Pendências de segurança — Bloco 2 e adjacentes
+
+## webhook GeraDePix sem assinatura
+- Endpoint: POST /webhook/geradepix
+- Arquivo: src/controllers/geradepixWebhookController.ts
+- Status: aceita qualquer POST não-autenticado
+- Documentação atual da GeraDePix não oferece mecanismo de assinatura
+- Ação: solicitar ao suporte da GeraDePix mecanismo de assinatura HMAC
+        ou alternativa (ex: chamada de callback validável via API)
+- Mitigação temporária: até lá, dependemos só de obscuridade da URL +
+  validação de payload + idempotência
+
+## webhook Telegram com secret opcional
+- Arquivo: src/controllers/telegramController.ts
+- Comportamento atual: if (!secret) return true → endpoint aberto
+  quando TELEGRAM_WEBHOOK_SECRET não configurado
+- Esperado: secret deve ser obrigatório, faltar = erro 500 ou rejeição
+- Bloco 1 (env validation) já força a presença de TELEGRAM_BOT_TOKEN, mas o
+  handler ainda tem o "fail-open" em validateTelegramWebhook — corrigir num
+  bloco futuro de hardening
+
+## webhook GeraDePix sem rate limit
+- Endpoint: POST /webhook/geradepix
+- Risco: DoS por flood de webhooks falsos sem custo para o atacante
+- Ação: aplicar rate limit específico para rotas /webhook/* num bloco futuro
+  de hardening (separado do rate limit geral de usuários)

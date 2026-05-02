@@ -2065,3 +2065,23 @@ model UserPushPreference {
 
   @@map("user_push_preferences")
 }
+
+// ========================================
+// WEBHOOK IDEMPOTENCY
+// ========================================
+
+/** Tracks every inbound webhook event to prevent double-processing on gateway retries. */
+model WebhookIdempotencyKey {
+  id           String   @id @default(uuid())
+  source       String   // "telegram" | "geradepix" | "velora"
+  eventType    String   // e.g. "payment.paid", "withdrawal.completed", "telegram.update"
+  externalId   String   // payment_id / withdrawal_id / externalId / update_id (as string)
+  payloadHash  String   // sha256 of JSON.stringify(payload) — extra replay defence
+  processedAt  DateTime @default(now())
+  result       String   // "pending" | "ok" | "error" | "ignored_duplicate"
+  errorMessage String?
+
+  @@unique([source, eventType, externalId])
+  @@index([processedAt])
+  @@map("webhook_idempotency_keys")
+}

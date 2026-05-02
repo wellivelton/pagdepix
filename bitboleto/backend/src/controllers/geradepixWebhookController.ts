@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../prisma';
 import { fetchAndStoreSendPixReceipt } from '../services/sendPixReceiptStorage';
+import { ensureIdempotent, updateResult } from '../services/webhookIdempotency.service';
 
 /**
  * Webhook receptor da API GeraDePix (@geradepixbot).
@@ -11,45 +12,73 @@ import { fetchAndStoreSendPixReceipt } from '../services/sendPixReceiptStorage';
  * - withdrawal.completed, withdrawal.failed, withdrawal.expired, withdrawal.canceled, withdrawal.refunded
  *
  * Importante: retornar HTTP 200 em menos de 5 segundos.
+ *
+ * TODO(security): GeraDePix does not currently offer a webhook signature mechanism.
+ * This endpoint accepts any POST without authentication. When/if GeraDePix adds
+ * HMAC signing or an equivalent, implement verification here. Until then, idempotency
+ * and payload validation are the only defences. See SECURITY_TODOS.md.
  */
 export const geradepixWebhook = async (req: Request, res: Response) => {
-  // Sempre responder 200 imediatamente (doc GeraDePix exige < 5s)
-  res.status(200).json({ received: true });
-
   try {
     const body = req.body as Record<string, unknown>;
 
     if (!body || typeof body.event !== 'string') {
       console.warn('[GeraDePix] Webhook sem evento válido:', body);
-      return;
+      return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
     const event = body.event as string;
+    const externalId = ((body.withdrawal_id ?? body.payment_id) as string | undefined);
+
+    if (!externalId) {
+      console.warn('[GeraDePix] Webhook sem withdrawal_id nem payment_id:', body);
+      return res.status(400).json({ error: 'Missing external ID' });
+    }
+
+    // Responder 200 imediatamente (doc GeraDePix exige < 5s)
+    res.status(200).json({ received: true });
 
     // Processar de forma assíncrona
-    setImmediate(() => handleGeradepixEvent(event, body));
+    setImmediate(() => handleGeradepixEvent(event, body, externalId));
   } catch (err) {
     console.error('[geradepixWebhook] Erro ao processar:', err);
   }
 };
 
-async function handleGeradepixEvent(event: string, payload: Record<string, unknown>) {
+async function handleGeradepixEvent(event: string, payload: Record<string, unknown>, externalId: string) {
   try {
+    const idResult = await ensureIdempotent({ source: 'geradepix', eventType: event, externalId, payload });
+    if (idResult.alreadyProcessed) {
+      console.log(`[GeraDePix] Duplicate ${event}/${externalId} — skipping`);
+      return;
+    }
+
     console.log(`[GeraDePix] Evento recebido: ${event}`, JSON.stringify(payload));
 
     // Eventos de pagamento (receber Pix)
     if (event.startsWith('payment.')) {
       await handlePaymentEvent(event, payload);
+      await updateResult({ source: 'geradepix', eventType: event, externalId, result: 'ok' });
       return;
     }
 
     // Eventos de saque (Depix → Pix)
     if (event.startsWith('withdrawal.')) {
       await handleWithdrawalEvent(event, payload);
+      await updateResult({ source: 'geradepix', eventType: event, externalId, result: 'ok' });
       return;
     }
+
+    await updateResult({ source: 'geradepix', eventType: event, externalId, result: 'ok' });
   } catch (err) {
     console.error(`[GeraDePix] Erro ao processar evento ${event}:`, err);
+    await updateResult({
+      source: 'geradepix',
+      eventType: event,
+      externalId,
+      result: 'error',
+      errorMessage: (err as Error)?.message,
+    }).catch(() => {});
   }
 }
 

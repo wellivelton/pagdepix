@@ -9,6 +9,7 @@ import {
   sendTelegramMessage,
   type TelegramUpdate,
 } from '../services/telegram.service';
+import { ensureIdempotent, updateResult } from '../services/webhookIdempotency.service';
 
 /** Mensagem quando comando /start é processado com sucesso. */
 const MSG_START_SUCCESS = (name: string) => 
@@ -56,16 +57,46 @@ export async function telegramWebhook(req: Request, res: Response): Promise<void
   // Telegram exige resposta 200 rápida; processar webhook em background
   res.sendStatus(200);
 
-  if (!update?.message?.text) {
-    return;
-  }
+  // update_id must be present for idempotency tracking.
+  if (!update?.update_id) return;
 
-  processWebhookUpdate(update)
-    .then((result) => {
-      if (result.chatId === 0) return;
-      const textToSend = result.message || MSG_DEFAULT;
-      const opts = result.message ? { parse_mode: 'Markdown' as const } : undefined;
-      return sendTelegramMessage(result.chatId, textToSend, opts);
-    })
-    .catch((err) => console.error('[Telegram Webhook] Erro:', err));
+  const externalId = String(update.update_id);
+
+  // Fire-and-forget after response is sent — errors must NOT reach Express error handler.
+  void (async () => {
+    try {
+      const idResult = await ensureIdempotent({
+        source: 'telegram',
+        eventType: 'telegram.update',
+        externalId,
+        payload: update,
+      });
+      if (idResult.alreadyProcessed) {
+        console.log(`[Telegram] Duplicate update_id ${externalId} — skipping`);
+        return;
+      }
+
+      if (!update?.message?.text) {
+        await updateResult({ source: 'telegram', eventType: 'telegram.update', externalId, result: 'ok' });
+        return;
+      }
+
+      const result = await processWebhookUpdate(update);
+      if (result.chatId !== 0) {
+        const textToSend = result.message || MSG_DEFAULT;
+        const opts = result.message ? { parse_mode: 'Markdown' as const } : undefined;
+        await sendTelegramMessage(result.chatId, textToSend, opts);
+      }
+      await updateResult({ source: 'telegram', eventType: 'telegram.update', externalId, result: 'ok' });
+    } catch (err) {
+      console.error('[Telegram Webhook] Erro:', err);
+      await updateResult({
+        source: 'telegram',
+        eventType: 'telegram.update',
+        externalId,
+        result: 'error',
+        errorMessage: (err as Error)?.message,
+      }).catch(() => {});
+    }
+  })();
 }
