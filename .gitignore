@@ -9,9 +9,10 @@ vendor/
 # logs
 *.log
 
-# banco de dados
+# banco de dados — proteger dumps mas permitir migrations do Prisma
 *.sql
 *.dump
+!bitboleto/backend/prisma/migrations/**/*.sql
 
 # backups
 *.tar.gz
@@ -28,3 +29,6 @@ storage/
 # sistema
 .DS_Store
 Thumbs.db
+
+# editor / ferramentas locais
+.claude/

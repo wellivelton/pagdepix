@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "CommerceSettings" ADD COLUMN IF NOT EXISTS "accentColor" TEXT,
+ADD COLUMN IF NOT EXISTS "backgroundColor" TEXT,
+ADD COLUMN IF NOT EXISTS "textColor" TEXT,
+ADD COLUMN IF NOT EXISTS "contactPhone" TEXT,
+ADD COLUMN IF NOT EXISTS "supportEmail" TEXT,
+ADD COLUMN IF NOT EXISTS "businessDescription" TEXT,
+ADD COLUMN IF NOT EXISTS "redirectUrl" TEXT,
+ADD COLUMN IF NOT EXISTS "faviconUrl" TEXT;
