@@ -812,9 +812,10 @@ model CouponUsage {
   userTelegram    String
   userIp          String
   deviceFingerprint String?
-  boletoId        String?  // opcional quando for uso em Receber Pix
-  depixOrderId    String?  // ID do pedido SwapVerse quando for Receber Pix
-  pixCopiaColaId  String?  // ID do pedido Pix Copia e Cola
+  boletoId          String?  // opcional quando for uso em Receber Pix
+  depixOrderId      String?  // ID do pedido SwapVerse quando for Receber Pix
+  pixCopiaColaId    String?  // ID do pedido Pix Copia e Cola
+  mobileRechargeId  String?  // ID do pedido Mobile Recharge
   createdAt       DateTime @default(now())
 
   coupon Coupon @relation(fields: [couponId], references: [id])

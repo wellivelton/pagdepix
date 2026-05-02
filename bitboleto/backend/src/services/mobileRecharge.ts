@@ -323,8 +323,8 @@ export async function createRecharge(input: CreateRechargeInput): Promise<Create
 
     if (isXpubConfigured()) {
       try {
-        const xpub = process.env.LIQUID_XPUB!;
-        const mbk = process.env.LIQUID_MASTER_BLINDING_KEY!;
+        const xpub = env.LIQUID_XPUB;
+        const mbk = env.LIQUID_MASTER_BLINDING_KEY;
         liquidAddressIndex = await getNextAddressIndex(prisma);
         walletAddr = deriveLiquidAddress(xpub, mbk, liquidAddressIndex);
       } catch (err: any) {
@@ -358,30 +358,72 @@ export async function createRecharge(input: CreateRechargeInput): Promise<Create
       rateLockExpiresAt = new Date(Date.now() + walletConfig.rateLockMinutes * 60_000);
     }
 
-    const recharge = await prisma.mobileRecharge.create({
-      data: {
-        userId,
-        operator: String(operator).trim(),
-        phoneNumber: normalized,
-        amount: numAmount,
-        fee,
-        totalAmount,
-        depixAmount,
-        walletAddress: walletAddr,
-        liquidAddressIndex: liquidAddressIndex ?? undefined,
-        status: 'PENDING',
-        couponId: couponId ?? undefined,
-        affiliateId: affiliateId ?? undefined,
-        couponUsed: couponUsed ?? undefined,
-        paymentCurrency: currency as any,
-        exchangeRate: exchangeRateVal,
-        cryptoAmount: cryptoAmountVal,
-        rateLockExpiresAt,
-      },
-      include: {
-        user: { select: { id: true, name: true, email: true, telegram: true } }
+    // Retry loop for rare P2002 collision on liquidAddressIndex.
+    // P2002 aborts the PostgreSQL transaction — must retry the entire $transaction call.
+    const MAX_INDEX_RETRIES = 3;
+    let recharge: any;
+    for (let attempt = 0; attempt <= MAX_INDEX_RETRIES; attempt++) {
+      try {
+        recharge = await prisma.$transaction(async (tx: any) => {
+          // Lock the coupon row to prevent concurrent requests from exhausting it
+          // between our pre-check and INSERT.
+          if (couponId) {
+            const rows: any[] = await tx.$queryRaw`
+              SELECT id, "usageCount", "maxUsage", "isActive"
+              FROM "Coupon"
+              WHERE id = ${couponId}
+              FOR UPDATE
+            `;
+            const coupon = rows[0];
+            if (!coupon?.isActive) throw new Error('COUPON_INACTIVE');
+            if (coupon.maxUsage != null && coupon.usageCount >= coupon.maxUsage) throw new Error('COUPON_EXHAUSTED');
+          }
+
+          return tx.mobileRecharge.create({
+            data: {
+              userId,
+              operator: String(operator).trim(),
+              phoneNumber: normalized,
+              amount: numAmount,
+              fee,
+              totalAmount,
+              depixAmount,
+              walletAddress: walletAddr,
+              liquidAddressIndex: liquidAddressIndex ?? undefined,
+              status: 'PENDING',
+              couponId: couponId ?? undefined,
+              affiliateId: affiliateId ?? undefined,
+              couponUsed: couponUsed ?? undefined,
+              paymentCurrency: currency as any,
+              exchangeRate: exchangeRateVal,
+              cryptoAmount: cryptoAmountVal,
+              rateLockExpiresAt,
+            },
+            include: {
+              user: { select: { id: true, name: true, email: true, telegram: true } }
+            }
+          });
+        }, { timeout: 5000 });
+        break;
+      } catch (err: any) {
+        if (err?.message === 'COUPON_EXHAUSTED') return { success: false, error: 'Cupom esgotado. Tente outro cupom ou prossiga sem desconto.' };
+        if (err?.message === 'COUPON_INACTIVE') return { success: false, error: 'Cupom inativo.' };
+        if (err?.code === 'P2002' && liquidAddressIndex !== null && attempt < MAX_INDEX_RETRIES) {
+          try {
+            liquidAddressIndex = await getNextAddressIndex(prisma);
+            walletAddr = deriveLiquidAddress(env.LIQUID_XPUB, env.LIQUID_MASTER_BLINDING_KEY, liquidAddressIndex);
+          } catch (hdErr) {
+            console.error('[LiquidHD] Retry failed, falling back to static wallet:', hdErr);
+            liquidAddressIndex = null;
+            try { walletAddr = pickRechargeWallet(walletConfig, currency); } catch (e: any) {
+              return { success: false, error: e.message };
+            }
+          }
+          continue;
+        }
+        throw err;
       }
-    });
+    }
 
     // NÃO incrementar usageCount nem criar comissão aqui
     // Isso será feito apenas quando a recarga for aprovada (adminApproveRechargeWithReceipt)
@@ -540,108 +582,146 @@ export async function finalizeApprovedRecharge(
   rechargeId: string,
   options?: { receiptUrl?: string; asaasOperatorName?: string }
 ): Promise<{ success: boolean; error?: string; recharge?: any }> {
-  const recharge = await prisma.mobileRecharge.findUnique({ where: { id: rechargeId } });
-  if (!recharge) return { success: false, error: 'Recarga não encontrada.' };
-  if (recharge.status === 'PAID') return { success: false, error: 'Recarga já está paga.' };
-
-  const updated = await (prisma as any).mobileRecharge.update({
+  const recharge = await prisma.mobileRecharge.findUnique({
     where: { id: rechargeId },
-    data: {
-      status: 'PAID',
-      paidAt: new Date(),
-      asaasStatus: 'CONFIRMED',
-      ...(options?.receiptUrl ? { receiptUrl: options.receiptUrl.trim() } : {}),
-    },
-    include: { user: { select: { id: true, name: true, email: true, telegram: true } } }
+    include: { user: { select: { id: true, name: true, email: true, telegram: true } } },
   });
+  if (!recharge) return { success: false, error: 'Recarga não encontrada.' };
 
-  await prisma.user.update({
-    where: { id: recharge.userId },
-    data: { totalPaid: { increment: recharge.totalAmount } },
-  });
+  let referralNotification: { earnerId: string; commission: number } | null = null;
 
-  // Comissão de indicação (referral)
   try {
-    const rechargeOwner = await prisma.user.findUnique({ where: { id: recharge.userId }, select: { referredByCode: true } });
-    if (rechargeOwner?.referredByCode) {
-      const referrer = await prisma.user.findUnique({ where: { referralCode: rechargeOwner.referredByCode }, select: { id: true } });
-      if (referrer) {
-        const referralCommission = Math.floor(recharge.fee * REFERRAL_RATE * 100) / 100;
-        await (prisma as any).referralEarning.create({
-          data: { earnerId: referrer.id, sourceUserId: recharge.userId, rechargeId: recharge.id, feeAmount: recharge.fee, commission: referralCommission }
-        });
-        try { const { notifyAffiliateCommission } = require('./push.service'); notifyAffiliateCommission(referrer.id, referralCommission).catch(() => {}); } catch (_e) {}
-        try { const { notifyUserByTelegram } = require('./telegram.service'); notifyUserByTelegram(referrer.id, `🎉 Nova comissão de indicação!\n\nVocê ganhou R$ ${referralCommission.toFixed(2)} pela aprovação de uma recarga do seu indicado.`).catch(() => {}); } catch (_e) {}
-      }
-    }
-  } catch (error) {
-    console.error(`[ASAAS] Erro ao criar comissão referral para recarga ${recharge.id}:`, error);
-  }
+    await (prisma as any).$transaction(async (tx: any) => {
+      // Atomic claim — prevents double-finalization from concurrent callers
+      // (adminMarkRechargePaid, adminApproveRechargeWithReceipt, syncAsaasRecharges).
+      const claimed = await tx.mobileRecharge.updateMany({
+        where: { id: rechargeId, status: { in: ['PENDING', 'PROCESSING'] } },
+        data: {
+          status: 'PAID',
+          paidAt: new Date(),
+          ...(options?.receiptUrl ? { receiptUrl: options.receiptUrl.trim() } : {}),
+        },
+      });
+      if (claimed.count === 0) throw new Error('RECHARGE_ALREADY_FINALIZED');
 
-  // Comissão de afiliado (cupom ou API)
-  if (recharge.affiliateId) {
-    const existingTransaction = await prisma.affiliateTransaction.findFirst({
-      where: { affiliateId: recharge.affiliateId, mobileRechargeId: recharge.id as any }
-    });
+      await tx.user.update({
+        where: { id: recharge.userId },
+        data: { totalPaid: { increment: recharge.totalAmount } },
+      });
 
-    if (existingTransaction) {
-      if (existingTransaction.status === 'PENDING') {
-        await prisma.affiliateTransaction.update({
-          where: { id: existingTransaction.id },
-          data: { status: 'AVAILABLE', availableAt: new Date() }
-        });
-        await prisma.affiliate.update({
-          where: { id: recharge.affiliateId },
-          data: { pendingBalance: { decrement: existingTransaction.commission }, balance: { increment: existingTransaction.commission } }
-        });
-      }
-    } else {
-      const RECHARGE_COST_PERCENT = 0.02;
-      const RECHARGE_COST_FIXED = 0.99;
-      const cost = recharge.amount * RECHARGE_COST_PERCENT + RECHARGE_COST_FIXED;
-      const profit = Math.max(0, recharge.fee - cost);
-      const commissionAmount = Math.floor(profit * 0.20 * 100) / 100;
-      if (commissionAmount > 0) {
-        try {
-          await prisma.affiliateTransaction.create({
+      // Referral earning — Bug C fix: no try/catch, errors propagate and roll back.
+      const owner = await tx.user.findUnique({ where: { id: recharge.userId }, select: { referredByCode: true } });
+      if (owner?.referredByCode) {
+        const referrer = await tx.user.findUnique({ where: { referralCode: owner.referredByCode }, select: { id: true } });
+        if (referrer) {
+          const referralCommission = Math.floor(Number(recharge.fee) * REFERRAL_RATE * 100) / 100;
+          await (tx as any).referralEarning.create({
             data: {
-              affiliateId: recharge.affiliateId,
-              mobileRechargeId: recharge.id as any,
-              amount: recharge.totalAmount,
-              commission: commissionAmount,
-              status: 'AVAILABLE',
-              availableAt: new Date()
-            }
+              earnerId: referrer.id,
+              sourceUserId: recharge.userId,
+              rechargeId: recharge.id,
+              feeAmount: Number(recharge.fee),
+              commission: referralCommission,
+            },
           });
-          await prisma.affiliate.update({
-            where: { id: recharge.affiliateId },
-            data: { balance: { increment: commissionAmount }, totalEarned: { increment: commissionAmount } }
-          });
-        } catch (error) {
-          console.error(`[ASAAS] Erro ao criar comissão afiliado para recarga ${recharge.id}:`, error);
+          referralNotification = { earnerId: referrer.id, commission: referralCommission };
         }
       }
-    }
 
-    if (recharge.couponId) {
-      try {
-        await prisma.coupon.update({ where: { id: recharge.couponId }, data: { usageCount: { increment: 1 } } });
-      } catch (error) {
-        console.error(`[ASAAS] Erro ao incrementar usageCount do cupom ${recharge.couponId}:`, error);
+      // Affiliate commission — Bug C fix: no try/catch inside.
+      if (recharge.affiliateId) {
+        const existingTransaction = await tx.affiliateTransaction.findFirst({
+          where: { affiliateId: recharge.affiliateId, mobileRechargeId: recharge.id },
+        });
+        if (existingTransaction) {
+          if (existingTransaction.status === 'PENDING') {
+            await tx.affiliateTransaction.update({
+              where: { id: existingTransaction.id },
+              data: { status: 'AVAILABLE', availableAt: new Date() },
+            });
+            await tx.affiliate.update({
+              where: { id: recharge.affiliateId },
+              data: {
+                pendingBalance: { decrement: existingTransaction.commission },
+                balance: { increment: existingTransaction.commission },
+              },
+            });
+          }
+        } else {
+          const RECHARGE_COST_PERCENT = 0.02;
+          const RECHARGE_COST_FIXED = 0.99;
+          const cost = Number(recharge.amount) * RECHARGE_COST_PERCENT + RECHARGE_COST_FIXED;
+          const profit = Math.max(0, Number(recharge.fee) - cost);
+          const commissionAmount = Math.floor(profit * 0.20 * 100) / 100;
+          if (commissionAmount > 0) {
+            await tx.affiliateTransaction.create({
+              data: {
+                affiliateId: recharge.affiliateId,
+                mobileRechargeId: recharge.id,
+                amount: Number(recharge.totalAmount),
+                commission: commissionAmount,
+                status: 'AVAILABLE',
+                availableAt: new Date(),
+              },
+            });
+            await tx.affiliate.update({
+              where: { id: recharge.affiliateId },
+              data: { balance: { increment: commissionAmount }, totalEarned: { increment: commissionAmount } },
+            });
+          }
+        }
       }
+
+      // Bug B fix: coupon usageCount increment is outside if(affiliateId) block.
+      if (recharge.couponId) {
+        await tx.coupon.update({
+          where: { id: recharge.couponId },
+          data: { usageCount: { increment: 1 } },
+        });
+
+        // Bug A fix: CouponUsage was never created for mobile recharge orders.
+        await tx.couponUsage.create({
+          data: {
+            couponId: recharge.couponId,
+            userId: recharge.userId,
+            userEmail: (recharge as any).user?.email ?? '',
+            userTelegram: (recharge as any).user?.telegram ?? '',
+            userIp: '', // TODO: store userIp on MobileRecharge and pass it here
+            mobileRechargeId: recharge.id,
+          },
+        });
+      }
+    }, { isolationLevel: 'Serializable', timeout: 10000 });
+  } catch (err: any) {
+    if (err?.message === 'RECHARGE_ALREADY_FINALIZED') {
+      console.warn(`[finalizeApprovedRecharge] Recharge ${rechargeId} already finalized — skipping.`);
+      return { success: false, error: 'Recarga já finalizada.' };
     }
+    throw err;
+  }
+
+  const updated = await (prisma as any).mobileRecharge.findUnique({
+    where: { id: rechargeId },
+    include: { user: { select: { id: true, name: true, email: true, telegram: true } } },
+  });
+
+  // Referral notifications fire after transaction commit.
+  const notif = referralNotification as { earnerId: string; commission: number } | null;
+  if (notif) {
+    try { const { notifyAffiliateCommission } = require('./push.service'); notifyAffiliateCommission(notif.earnerId, notif.commission).catch(() => {}); } catch (_e) {}
+    try { const { notifyUserByTelegram } = require('./telegram.service'); notifyUserByTelegram(notif.earnerId, `🎉 Nova comissão de indicação!\n\nVocê ganhou R$ ${notif.commission.toFixed(2)} pela aprovação de uma recarga do seu indicado.`).catch(() => {}); } catch (_e) {}
   }
 
   // Push notification
   try {
     const { notifyRechargeApproved } = require('./push.service');
-    notifyRechargeApproved(recharge.userId, recharge.totalAmount ?? recharge.amount ?? 0, options?.receiptUrl ?? '').catch(() => {});
+    notifyRechargeApproved(recharge.userId, Number(recharge.totalAmount ?? recharge.amount ?? 0), options?.receiptUrl ?? '').catch(() => {});
   } catch (_e) {}
 
   // Telegram notification
   try {
     const { notifyUserByTelegram } = require('./telegram.service');
-    const valor = (recharge.totalAmount ?? recharge.amount ?? 0).toFixed(2).replace('.', ',');
+    const valor = Number(recharge.totalAmount ?? recharge.amount ?? 0).toFixed(2).replace('.', ',');
     const operadoraInfo = options?.asaasOperatorName ? `\nOperadora: ${options.asaasOperatorName}` : '';
     notifyUserByTelegram(recharge.userId, `✅ PagDepix liquidou sua recarga!\nValor: R$ ${valor}${operadoraInfo}`).catch(() => {});
   } catch (_e) {}
@@ -696,8 +776,34 @@ export async function adminMarkRechargePaid(rechargeId: string): Promise<{ succe
   if (recharge.status === 'PROCESSING') return { success: false, error: 'Recarga já foi enviada ao Asaas, aguardando confirmação.' };
 
   if (asaasIsConfigured()) {
-    const asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
-    if (!asaasResult.success) return { success: false, error: `Asaas: ${asaasResult.error}` };
+    // Atomic claim: PENDING → PROCESSING before calling Asaas to prevent
+    // two concurrent admin calls from triggering two Asaas recharges.
+    const claimed = await (prisma as any).mobileRecharge.updateMany({
+      where: { id: rechargeId, status: 'PENDING' },
+      data: { status: 'PROCESSING' },
+    });
+    if (claimed.count === 0) {
+      return { success: false, error: 'Recarga já está sendo processada ou foi finalizada.' };
+    }
+
+    let asaasResult: any;
+    try {
+      asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
+    } catch (err) {
+      await (prisma as any).mobileRecharge.updateMany({
+        where: { id: rechargeId, status: 'PROCESSING' },
+        data: { status: 'PENDING' },
+      }).catch(() => {});
+      throw err;
+    }
+
+    if (!asaasResult.success) {
+      await (prisma as any).mobileRecharge.updateMany({
+        where: { id: rechargeId, status: 'PROCESSING' },
+        data: { status: 'PENDING' },
+      }).catch(() => {});
+      return { success: false, error: `Asaas: ${asaasResult.error}` };
+    }
 
     await (prisma as any).mobileRecharge.update({
       where: { id: rechargeId },
@@ -708,11 +814,6 @@ export async function adminMarkRechargePaid(rechargeId: string): Promise<{ succe
       return finalizeApprovedRecharge(rechargeId, { asaasOperatorName: asaasResult.operatorName });
     }
 
-    await (prisma as any).mobileRecharge.update({
-      where: { id: rechargeId },
-      data: { status: 'PROCESSING' },
-    });
-
     const pendingRecharge = await (prisma as any).mobileRecharge.findUnique({
       where: { id: rechargeId },
       include: { user: { select: { id: true, name: true, email: true, telegram: true } } }
@@ -721,7 +822,7 @@ export async function adminMarkRechargePaid(rechargeId: string): Promise<{ succe
     return { success: true, asaasPending: true, recharge: pendingRecharge };
   }
 
-  // Fallback sem Asaas (manual)
+  // Fallback sem Asaas (manual) — finalizeApprovedRecharge has its own atomic claim.
   return finalizeApprovedRecharge(rechargeId);
 }
 
@@ -736,8 +837,33 @@ export async function adminApproveRechargeWithReceipt(
   if (recharge.status === 'PROCESSING') return { success: false, error: 'Recarga já foi enviada ao Asaas, aguardando confirmação.' };
 
   if (asaasIsConfigured()) {
-    const asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
-    if (!asaasResult.success) return { success: false, error: `Asaas: ${asaasResult.error}` };
+    // Atomic claim: PENDING → PROCESSING before calling Asaas.
+    const claimed = await (prisma as any).mobileRecharge.updateMany({
+      where: { id: rechargeId, status: 'PENDING' },
+      data: { status: 'PROCESSING' },
+    });
+    if (claimed.count === 0) {
+      return { success: false, error: 'Recarga já está sendo processada ou foi finalizada.' };
+    }
+
+    let asaasResult: any;
+    try {
+      asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
+    } catch (err) {
+      await (prisma as any).mobileRecharge.updateMany({
+        where: { id: rechargeId, status: 'PROCESSING' },
+        data: { status: 'PENDING' },
+      }).catch(() => {});
+      throw err;
+    }
+
+    if (!asaasResult.success) {
+      await (prisma as any).mobileRecharge.updateMany({
+        where: { id: rechargeId, status: 'PROCESSING' },
+        data: { status: 'PENDING' },
+      }).catch(() => {});
+      return { success: false, error: `Asaas: ${asaasResult.error}` };
+    }
 
     await (prisma as any).mobileRecharge.update({
       where: { id: rechargeId },
@@ -748,11 +874,6 @@ export async function adminApproveRechargeWithReceipt(
       return finalizeApprovedRecharge(rechargeId, { receiptUrl, asaasOperatorName: asaasResult.operatorName });
     }
 
-    await (prisma as any).mobileRecharge.update({
-      where: { id: rechargeId },
-      data: { status: 'PROCESSING' },
-    });
-
     const pendingRecharge = await (prisma as any).mobileRecharge.findUnique({
       where: { id: rechargeId },
       include: { user: { select: { id: true, name: true, email: true, telegram: true } } }
@@ -761,7 +882,7 @@ export async function adminApproveRechargeWithReceipt(
     return { success: true, asaasPending: true, recharge: pendingRecharge };
   }
 
-  // Fallback sem Asaas: comprovante obrigatório
+  // Fallback sem Asaas: comprovante obrigatório — finalizeApprovedRecharge has atomic claim.
   if (!receiptUrl || receiptUrl.trim() === '') {
     return { success: false, error: 'Comprovante de liquidação é obrigatório.' };
   }

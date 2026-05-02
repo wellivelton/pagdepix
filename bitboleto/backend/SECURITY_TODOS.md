@@ -19,15 +19,16 @@
   handler ainda tem o "fail-open" em validateTelegramWebhook — corrigir num
   bloco futuro de hardening
 
-## Limite de cupom por IP/device inoperante em PCC
+## Limite de cupom por IP/device inoperante em PCC e Mobile Recharge
 
-- Arquivo: pixCopiaCola.ts (adminProcessPixCopiaCola)
-- Comportamento atual: CouponUsage criada para PCC com userIp='' (vazio)
-- Consequência: limite por IP em validateCouponUsage não funciona para PCC,
-  mesmo após Bug A ter sido corrigido (limite por email/telegram funciona)
-- Solução: passar req.ip do controller até createPixCopiaCola e
-  adminProcessPixCopiaCola, armazenar em PixCopiaCola.userIp como novo campo
-  (mudança de schema)
+- Arquivos: pixCopiaCola.ts (adminProcessPixCopiaCola),
+            mobileRecharge.ts (finalizeApprovedRecharge)
+- Comportamento atual: CouponUsage criada com userIp='' (vazio) em ambos os fluxos
+- Consequência: limite por IP em validateCouponUsage não funciona para PCC nem
+  Mobile Recharge, mesmo após Bug A ter sido corrigido (limite por email/telegram funciona)
+- Solução: passar req.ip do controller até as funções de criação/aprovação,
+  armazenar em PixCopiaCola.userIp e MobileRecharge.userIp como novos campos
+  (mudança de schema em ambos os modelos)
 - Ação: Bloco 6 (médios) ou bloco dedicado a antifraud
 
 ## webhook GeraDePix sem rate limit
