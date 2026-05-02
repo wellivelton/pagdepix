@@ -5,6 +5,7 @@ import { generateDepixQr, getDepixOrderStatus } from '../../services/swapverse';
 import { deliverOrder } from '../../services/marketplace/delivery.service';
 import { validateDownloadToken } from '../../services/marketplace/downloadLink.service';
 import { sendMarketplaceOrderPendingEmail } from '../../services/email.service';
+import { env } from '../../config/env';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -119,7 +120,7 @@ export const createOrder = async (req: Request, res: Response) => {
     }
 
     const config = await prisma.config.findUnique({ where: { id: 'config' } });
-    const platformWallet = config?.walletAddress || process.env.LIQUID_WALLET_ADDRESS || '';
+    const platformWallet = config?.walletAddress || env.LIQUID_WALLET_ADDRESS;
     if (!platformWallet) {
       return res.status(500).json({ error: 'Carteira da plataforma não configurada' });
     }

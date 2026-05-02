@@ -1,9 +1,11 @@
 import { Router, Request } from 'express';
+import { env } from '../config/env';
 import { notifyRechargeApproved } from '../services/push.service';
 import * as jwt from 'jsonwebtoken';
 import multer, { File as MulterFile } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createHmac, timingSafeEqual } from 'crypto';
 import {
   register,
   login,
@@ -167,7 +169,13 @@ import {
   getPixCopiaColaById,
   adminListPixCopiaCola,
   adminProcessPixCopiaCola,
+  adminPayViaVelora,
+  adminPayViaAsaas,
+  adminCancelPixCopiaCola,
+  adminCancelAllPending,
 } from '../services/pixCopiaCola';
+import { veloraDecodePixCode } from '../services/velora.service';
+import { asaasDecodePixCode } from '../services/asaas.service';
 import { getMaintenanceStatusPublic, getAdminMaintenance, setMaintenance } from '../controllers/maintenanceController';
 import { dispatchWebhook } from '../services/webhookService';
 // import { generateDepixQr, getDepixOrderStatus, getDepixTransactions, PAGDEPIX_FEE_PERCENT, SWAPVERSE_FEE_PERCENT, DEPIX_MARGIN_PERCENT, DEPIX_FIXED_FEE } from '../services/swapverse'; // DESATIVADO: compra de DePix removida
@@ -188,6 +196,7 @@ const telegramService = require('../services/telegram.service') as { notifyUserB
 const notifyUserByTelegram = telegramService.notifyUserByTelegram ?? (async () => {});
 
 const router = Router();
+
 
 // ========================================
 // UPLOAD DE ARQUIVOS (PDF BOLETO / COMPROVANTE)
@@ -444,7 +453,7 @@ const authMiddleware = (req: any, res: any, next: any) => {
   try {
     const decoded = jwt.verify(
       token,
-      process.env.JWT_SECRET || 'seu-secret-aqui'
+      env.JWT_SECRET
     ) as JwtPayload;
 
     req.userId = decoded.userId;
@@ -653,6 +662,27 @@ router.post('/boleto/simulate', async (req, res) => {
     console.error('Erro ao calcular taxa:', error);
     return res.status(500).json({ error: 'Erro interno' });
   }
+});
+
+// Decodificar boleto via Asaas (linha digitável ou código de barras)
+router.post('/boleto/decode', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  const { barcode } = req.body;
+  if (!barcode || typeof barcode !== 'string') {
+    return res.status(400).json({ error: 'Informe o código de barras.' });
+  }
+  const digits = barcode.replace(/\D/g, '');
+  if (digits.length < 44) {
+    return res.status(400).json({ error: 'Código inválido (mínimo 44 dígitos).' });
+  }
+  const { asaasIsConfigured: isConfigured, asaasSimulateBill } = require('../services/asaas.service');
+  if (!isConfigured()) {
+    return res.status(503).json({ error: 'Decodificação indisponível.' });
+  }
+  const result = await asaasSimulateBill(barcode);
+  if (!result.success) {
+    return res.status(422).json({ error: result.error || 'Não foi possível identificar o boleto. Verifique o código digitado.' });
+  }
+  return res.status(200).json(result.bill);
 });
 
 // Calcular taxa (preview) - Rota protegida para usuários autenticados (requer verificação)
@@ -941,6 +971,35 @@ router.get('/recharge/operators', (_req, res) => {
   return res.json({ operators: list });
 });
 
+router.get('/recharge/provider/:phoneNumber', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    const { asaasIsConfigured: isConfigured, asaasGetProvider } = require('../services/asaas.service');
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'Detecção automática não disponível.' });
+    }
+    const phone = (req.params.phoneNumber ?? '').replace(/\D/g, '').replace(/^55/, '');
+    if (phone.length !== 11) {
+      return res.status(400).json({ error: 'Número inválido. Informe DDD + 9 dígitos.' });
+    }
+    const result = await asaasGetProvider(phone);
+    if (!result.success) {
+      return res.status(404).json({ error: result.error });
+    }
+    const values = (result.values ?? [])
+      .map((v: any) => ({
+        name: v.name,
+        amount: v.maxValue,
+        bonus: v.bonus,
+        description: v.description ?? null,
+      }))
+      .filter((v: any) => typeof v.amount === 'number' && v.amount >= 20);
+    return res.json({ name: result.name, values });
+  } catch (err) {
+    console.error('[provider] Erro ao detectar operadora:', err);
+    return res.status(500).json({ error: 'Erro ao detectar operadora.' });
+  }
+});
+
 router.post('/recharge/calculate', ...protectedAndVerifiedRoute, async (req: any, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -1136,6 +1195,9 @@ router.post('/admin/recharge/:id/paid', ...protectedAndVerifiedRoute, async (req
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const result = await adminMarkRechargePaid(req.params.id);
     if (!result.success) return res.status(400).json({ error: result.error });
+    if ((result as any).asaasPending) {
+      return res.json({ message: 'Recarga enviada ao Asaas. Aguardando confirmação da operadora.', recharge: result.recharge });
+    }
     return res.json({ message: 'Recarga marcada como paga.', recharge: result.recharge });
   } catch (error) {
     console.error('Erro ao marcar recarga como paga:', error);
@@ -1143,38 +1205,21 @@ router.post('/admin/recharge/:id/paid', ...protectedAndVerifiedRoute, async (req
   }
 });
 
-// Aprovar recarga com comprovante de liquidação (obrigatório)
+// Aprovar recarga. Com Asaas configurado, comprovante é opcional.
 router.post('/admin/recharge/:id/approve', ...protectedAndVerifiedRoute, uploadRecharge.single('file'), async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const rechargeId = req.params?.id;
     if (!rechargeId) return res.status(400).json({ error: 'ID da recarga é obrigatório.' });
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: 'Envie o comprovante de liquidação (PDF ou imagem) para aprovar a recarga.' });
     const baseUrl = process.env.APP_URL || 'http://localhost:3001';
-    const receiptUrl = `${baseUrl}/uploads/recharges/${file.filename}`;
+    const receiptUrl = req.file ? `${baseUrl}/uploads/recharges/${req.file.filename}` : undefined;
     const result = await adminApproveRechargeWithReceipt(rechargeId, receiptUrl);
     if (!result.success) return res.status(400).json({ error: result.error });
-    const recharge = result.recharge as { userId: string; totalAmount?: number; amount?: number };
-    if (recharge?.userId) {
-      const valor = (recharge.totalAmount ?? recharge.amount ?? 0).toFixed(2).replace('.', ',');
-      notifyUserByTelegram(recharge.userId, `✅ PagDepix liquidou sua recarga!\nValor: R$ ${valor}\nAcesse o site para ver o comprovante.`).catch(() => {});
-      notifyRechargeApproved(recharge.userId, recharge.totalAmount ?? recharge.amount ?? 0, receiptUrl).catch(() => {});
+    if ((result as any).asaasPending) {
+      return res.json({ message: 'Recarga enviada ao Asaas. Aguardando confirmação da operadora.', recharge: result.recharge });
     }
-    // Webhook para API White-Label
-    const fullRecharge = result.recharge as any;
-    if (fullRecharge?.apiKeyId) {
-      dispatchWebhook('recharge.completed', rechargeId, 'recharge', {
-        operator: fullRecharge.operator,
-        phoneNumber: fullRecharge.phoneNumber,
-        amount: fullRecharge.amount,
-        totalAmount: fullRecharge.totalAmount,
-        status: 'PAID',
-        receiptUrl,
-        externalRef: fullRecharge.externalRef,
-      }, fullRecharge.apiKeyId, fullRecharge.isSandbox).catch(() => {});
-    }
-    return res.json({ message: 'Recarga aprovada. Comprovante salvo.', recharge: result.recharge });
+    // Notificações já disparadas dentro de finalizeApprovedRecharge (Telegram + push + webhook)
+    return res.json({ message: 'Recarga aprovada com sucesso.', recharge: result.recharge });
   } catch (error: any) {
     const msg = error?.message ?? '';
     console.error('Erro ao aprovar recarga:', error);
@@ -1238,7 +1283,7 @@ router.post('/pix-copia-cola/create', ...protectedAndVerifiedRoute, async (req: 
     const {
       codigoPix, valorOriginal, nomeDestinatario,
       contatoTelegram, contatoEmail, contatoWhatsApp,
-      couponCode, paymentCurrency,
+      couponCode, paymentCurrency, autoMode,
     } = req.body;
     const result = await createPixCopiaCola({
       userId: req.userId,
@@ -1250,6 +1295,7 @@ router.post('/pix-copia-cola/create', ...protectedAndVerifiedRoute, async (req: 
       contatoWhatsApp,
       couponCode,
       paymentCurrency,
+      autoMode: autoMode !== false, // default true; send false to force manual
       userIp: req.ip,
       deviceFingerprint: (req as any).deviceFingerprint,
     });
@@ -1270,6 +1316,41 @@ router.get('/pix-copia-cola', ...protectedAndVerifiedRoute, async (req: any, res
     return res.json(result);
   } catch (error) {
     return res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
+// User: verificar saldo Velora e disponibilidade de modo automático
+// MUST be before /:id to avoid Express treating "check-auto" as an id
+router.get('/pix-copia-cola/check-auto', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    const amount = parseFloat(req.query.amount as string);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      console.warn('[check-auto] Valor inválido:', req.query.amount);
+      return res.json({ available: false });
+    }
+
+    const xpubConfigured = !!(process.env.LIQUID_XPUB && process.env.LIQUID_MASTER_BLINDING_KEY);
+    if (!xpubConfigured) {
+      console.warn('[check-auto] LIQUID_XPUB ou LIQUID_MASTER_BLINDING_KEY não configurados — modo automático indisponível.');
+      return res.json({ available: false });
+    }
+
+    const { veloraGetBalance } = await import('../services/velora.service');
+    const balResult = await veloraGetBalance();
+
+    if (!balResult.success || balResult.balance == null) {
+      console.warn('[check-auto] Falha ao obter saldo Velora:', balResult.error);
+      return res.json({ available: false });
+    }
+
+    const balance = balResult.balance;
+    const available = balance >= amount;
+    console.log(`[check-auto] amount=${amount} available=${available}`);
+    return res.json({ available, balance });
+  } catch (err) {
+    console.error('[check-auto] Erro inesperado:', err);
+    return res.json({ available: false });
   }
 });
 
@@ -1300,6 +1381,19 @@ router.put('/pix-copia-cola/:id/txid', ...protectedAndVerifiedRoute, uploadPixCo
   }
 });
 
+// Admin: cancelar todos pendentes (estático — deve vir antes de /:id)
+router.post('/admin/pix-copia-cola/cancel-all-pending', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
+    const result = await adminCancelAllPending();
+    if (!result.success) return res.status(500).json({ error: result.error });
+    return res.json({ count: result.count });
+  } catch (error) {
+    console.error('Erro ao cancelar todos pendentes:', error);
+    return res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
 // Admin: listar
 router.get('/admin/pix-copia-cola', ...protectedAndVerifiedRoute, async (req: any, res) => {
   try {
@@ -1311,6 +1405,20 @@ router.get('/admin/pix-copia-cola', ...protectedAndVerifiedRoute, async (req: an
     return res.json(result);
   } catch (error) {
     console.error('Erro ao listar Pix Copia e Cola (admin):', error);
+    return res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
+// Admin: cancelar individual
+router.post('/admin/pix-copia-cola/:id/cancel', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
+    const { reason } = req.body;
+    const result = await adminCancelPixCopiaCola(req.params.id, reason);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json(result.pixCopiaCola);
+  } catch (error) {
+    console.error('Erro ao cancelar pedido:', error);
     return res.status(500).json({ error: 'Erro interno.' });
   }
 });
@@ -1334,6 +1442,117 @@ router.post('/admin/pix-copia-cola/:id/process', ...protectedAndVerifiedRoute, u
   } catch (error) {
     console.error('Erro ao processar Pix Copia e Cola (admin):', error);
     return res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
+// User: decodificar código Pix via Velora (auto-preenchimento)
+router.post('/pix-copia-cola/decode', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    const { codigoPix } = req.body;
+    if (!codigoPix?.trim()) return res.status(400).json({ error: 'Código Pix obrigatório.' });
+
+    // Try Velora first, fall back to Asaas on failure
+    let result = await veloraDecodePixCode(codigoPix.trim());
+    if (!result.success) {
+      console.warn(`[decode] Velora falhou (${result.error}), tentando Asaas como fallback...`);
+      const asaasResult = await asaasDecodePixCode(codigoPix.trim());
+      if (!asaasResult.success) {
+        return res.status(400).json({ error: asaasResult.error || result.error });
+      }
+      result = asaasResult;
+    }
+
+    return res.json({
+      receiverName: result.receiverName,
+      originalAmount: result.originalAmount,
+      bankName: result.bankName,
+    });
+  } catch (error) {
+    console.error('Erro ao decodificar QR Code:', error);
+    return res.status(500).json({ error: 'Erro ao decodificar código Pix.' });
+  }
+});
+
+// Admin: pagar via Velora
+router.post('/admin/pix-copia-cola/:id/pay-velora', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
+    const result = await adminPayViaVelora(req.params.id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json(result.pixCopiaCola);
+  } catch (error) {
+    console.error('Erro ao pagar via Velora:', error);
+    return res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
+// Admin: pagar via Asaas
+router.post('/admin/pix-copia-cola/:id/pay-asaas', ...protectedAndVerifiedRoute, async (req: any, res) => {
+  try {
+    if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
+    const result = await adminPayViaAsaas(req.params.id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json(result.pixCopiaCola);
+  } catch (error) {
+    console.error('Erro ao pagar via Asaas:', error);
+    return res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
+// Webhook Velora: atualização de status de pagamento de saída
+router.post('/webhook/velora', async (req: any, res) => {
+  const secret = process.env.VELORA_WEBHOOK_SECRET;
+
+  // Secret is mandatory — never accept unsigned webhooks in production.
+  if (!secret) {
+    console.error('[VELORA-WEBHOOK] VELORA_WEBHOOK_SECRET not configured. Rejecting request.');
+    return res.status(401).json({ error: 'Webhook não configurado.' });
+  }
+
+  const signature = req.headers['v-signature'] as string | undefined;
+  if (!signature) {
+    console.warn('[VELORA-WEBHOOK] Missing v-signature header.');
+    return res.status(401).json({ error: 'Assinatura ausente.' });
+  }
+
+  try {
+    // Use the raw body bytes — NOT JSON.stringify(req.body) — so the HMAC
+    // matches the bytes Velora actually signed, regardless of whitespace or key order.
+    const rawBody: Buffer = req.rawBody ?? Buffer.from(JSON.stringify(req.body));
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const receivedBuf = Buffer.from(signature, 'hex');
+    if (expectedBuf.length !== receivedBuf.length || !timingSafeEqual(expectedBuf, receivedBuf)) {
+      console.warn('[VELORA-WEBHOOK] Assinatura inválida.');
+      return res.status(401).json({ error: 'Assinatura inválida.' });
+    }
+  } catch {
+    return res.status(401).json({ error: 'Assinatura inválida.' });
+  }
+
+  res.status(200).json({ ok: true });
+
+  try {
+    const body = req.body as any;
+    const event: string = body?.event || '';
+    const externalId: string = body?.externalId || body?.data?.externalId || '';
+    const newStatus: string = body?.status || body?.data?.status || event;
+
+    if (!externalId) return;
+
+    const record = await (prisma as any).pixCopiaCola.findFirst({
+      where: { veloraExternalId: externalId },
+    });
+    if (!record) return;
+
+    await (prisma as any).pixCopiaCola.update({
+      where: { id: record.id },
+      data: { veloraStatus: newStatus || null },
+    });
+
+    console.log(`[VELORA-WEBHOOK] ${event} para PCC ${record.id} (Velora: ${externalId})`);
+  } catch (err) {
+    console.error('[VELORA-WEBHOOK] Erro:', err);
   }
 });
 
@@ -1579,6 +1798,144 @@ router.delete('/commerce/webhooks/:endpointId', ...protectedAndVerifiedRoute, as
     return res.json({ message: 'Webhook removido' });
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEWS FEED — NewsData.io (crypto/finance/politics) + RSS Jovem Pan (brasil)
+// TTL NewsData: 1800s (30min) → ~144 req/dia ≤ cota grátis 200/dia
+// TTL RSS:      900s  (15min) → grátis, sem cota
+// ─────────────────────────────────────────────────────────────────────────────
+import { fetchJovemPan } from '../services/rssAggregator';
+
+interface NewsItem {
+  id: string;
+  title: string;
+  description: string;
+  thumbnail: string | null;
+  source: string;
+  url: string;
+  category: 'crypto' | 'finance' | 'politics' | 'brasil';
+  publishedAt: string;
+}
+
+const NEWS_CACHE_TTL_MS  = Number(process.env.NEWS_CACHE_TTL_SECONDS  || 1800) * 1000;
+const NEWS_RSS_CACHE_TTL = Number(process.env.NEWS_RSS_CACHE_TTL_SECONDS || 900) * 1000;
+const NEWS_STALE_MAX_MS  = 6 * 60 * 60 * 1000;
+
+const newsCache = new Map<string, { items: NewsItem[]; fetchedAt: number }>();
+
+function toISO(d: string | null): string {
+  if (!d) return new Date().toISOString();
+  return d.includes('T') ? d : d.replace(' ', 'T') + 'Z';
+}
+
+type ApiCategory = 'crypto' | 'finance' | 'politics';
+
+const NEWSDATA_PARAMS: Record<ApiCategory, string> = {
+  crypto:   'q=bitcoin%20OR%20ethereum%20OR%20criptomoeda%20OR%20stablecoin%20OR%20blockchain%20OR%20USDT&language=pt,en&country=br,us',
+  finance:  'category=business&language=pt&country=br,us',
+  politics: 'category=politics&language=pt&country=br',
+};
+
+async function fetchNewsDataCategory(cat: ApiCategory): Promise<NewsItem[]> {
+  const key = process.env.NEWSDATA_API_KEY;
+  if (!key) return [];
+  const url = `https://newsdata.io/api/1/news?apikey=${key}&${NEWSDATA_PARAMS[cat]}`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!resp.ok) throw new Error(`NewsData ${resp.status}`);
+  const data: any = await resp.json();
+  return (data.results || []).map((r: any) => ({
+    id: `nd_${r.article_id}`,
+    title: r.title || '',
+    description: r.description || '',
+    thumbnail: r.image_url || null,
+    source: r.source_name || r.source_id || 'NewsData',
+    url: r.link || '',
+    category: cat,
+    publishedAt: toISO(r.pubDate),
+  }));
+}
+
+async function getCachedOrFetch(cat: ApiCategory, now: number): Promise<NewsItem[]> {
+  const cached = newsCache.get(cat);
+  if (cached && now - cached.fetchedAt < NEWS_CACHE_TTL_MS) return cached.items;
+  const items = await fetchNewsDataCategory(cat);
+  newsCache.set(cat, { items, fetchedAt: now });
+  return items;
+}
+
+async function getCachedOrFetchBrasil(now: number): Promise<NewsItem[]> {
+  const cached = newsCache.get('brasil');
+  if (cached && now - cached.fetchedAt < NEWS_RSS_CACHE_TTL) return cached.items;
+  const items = (await fetchJovemPan()) as NewsItem[];
+  newsCache.set('brasil', { items, fetchedAt: now });
+  return items;
+}
+
+async function getNews(category: string): Promise<{ items: NewsItem[]; fetchedAt: string; stale?: boolean }> {
+  const now = Date.now();
+  const cached = newsCache.get(category);
+
+  const ttl = category === 'brasil' ? NEWS_RSS_CACHE_TTL : NEWS_CACHE_TTL_MS;
+  if (cached && now - cached.fetchedAt < ttl) {
+    return { items: cached.items, fetchedAt: new Date(cached.fetchedAt).toISOString() };
+  }
+
+  try {
+    let items: NewsItem[] = [];
+
+    if (category === 'brasil') {
+      items = await getCachedOrFetchBrasil(now);
+    } else if (category === 'crypto' || category === 'finance' || category === 'politics') {
+      items = await getCachedOrFetch(category, now);
+      newsCache.set(category, { items, fetchedAt: now });
+    } else {
+      // 'all' — fetch all 4 sources in parallel, reusing per-category caches
+      const [crypto, finance, politics, brasil] = await Promise.allSettled([
+        getCachedOrFetch('crypto', now),
+        getCachedOrFetch('finance', now),
+        getCachedOrFetch('politics', now),
+        getCachedOrFetchBrasil(now),
+      ]);
+      if (crypto.status === 'fulfilled')   items.push(...crypto.value);
+      if (finance.status === 'fulfilled')  items.push(...finance.value);
+      if (politics.status === 'fulfilled') items.push(...politics.value);
+      if (brasil.status === 'fulfilled')   items.push(...brasil.value);
+    }
+
+    // Deduplicate by URL, sort newest first
+    const seen = new Set<string>();
+    items = items.filter(item => {
+      if (!item.url || seen.has(item.url)) return false;
+      seen.add(item.url);
+      return true;
+    });
+    items.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+    if (category === 'all') newsCache.set('all', { items, fetchedAt: now });
+    return { items, fetchedAt: new Date(now).toISOString() };
+  } catch {
+    if (cached && now - cached.fetchedAt < NEWS_STALE_MAX_MS) {
+      return { items: cached.items, fetchedAt: new Date(cached.fetchedAt).toISOString(), stale: true };
+    }
+    return { items: [], fetchedAt: new Date(now).toISOString() };
+  }
+}
+
+router.get('/feed', ...protectedRoute, async (req: any, res) => {
+  try {
+    const validCategories = ['all', 'crypto', 'finance', 'politics', 'brasil'];
+    const category = validCategories.includes(String(req.query.category)) ? String(req.query.category) : 'all';
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const result = await getNews(category);
+    return res.json({
+      items: result.items.slice(0, limit),
+      fetchedAt: result.fetchedAt,
+      ...(result.stale ? { stale: true } : {}),
+    });
+  } catch {
+    return res.json({ items: [], fetchedAt: new Date().toISOString() });
   }
 });
 

@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { env } from '../config/env';
 
 // ========================================
 // TIPOS
@@ -40,6 +41,7 @@ import {
 } from '../utils/antifraud';
 
 import { getRates, convertBrlToUsdt, convertBrlToSats } from './exchangeRate';
+import { isXpubConfigured, getNextAddressIndex, deriveLiquidAddress } from './liquidHdWallet.service';
 
 interface WalletConfig {
   walletAddress: string;
@@ -52,7 +54,7 @@ interface WalletConfig {
 }
 
 const getWalletConfig = async (): Promise<WalletConfig> => {
-  const defaultAddr = process.env.LIQUID_WALLET_ADDRESS || 'lq1qqgskhge4cunhw32799ky9wlaavt83xu0klvvz78yg4ugzr3dmq2t0gm4gyfdr59yhaq7anhkg52ha666d0nkys56jh979wyp7';
+  const defaultAddr = env.LIQUID_WALLET_ADDRESS;
   try {
     const config = await prisma.config.findUnique({ where: { id: 'config' } });
     if (config) {
@@ -302,10 +304,28 @@ export const createBoleto = async (
     }
 
     let wallet: { walletAddress: string; qrCodeUrl: string };
-    try {
-      wallet = pickWallet(walletConfig, currency);
-    } catch (err: any) {
-      return { success: false, error: err.message };
+    let liquidAddressIndex: number | null = null;
+
+    if (isXpubConfigured()) {
+      try {
+        const xpub = process.env.LIQUID_XPUB!;
+        const mbk = process.env.LIQUID_MASTER_BLINDING_KEY!;
+        liquidAddressIndex = await getNextAddressIndex(prisma);
+        const hdAddress = deriveLiquidAddress(xpub, mbk, liquidAddressIndex);
+        wallet = { walletAddress: hdAddress, qrCodeUrl: '' };
+      } catch (err: any) {
+        console.error('[createBoleto] HD derivation failed, falling back to static wallet:', err);
+        liquidAddressIndex = null;
+        try { wallet = pickWallet(walletConfig, currency); } catch (e: any) {
+          return { success: false, error: e.message };
+        }
+      }
+    } else {
+      try {
+        wallet = pickWallet(walletConfig, currency);
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
     }
 
     // ========================================
@@ -323,6 +343,7 @@ export const createBoleto = async (
       depixAmount,
       walletAddress: wallet.walletAddress,
       qrCode: wallet.qrCodeUrl,
+      liquidAddressIndex,
       status: 'PENDING',
       couponUsed: couponCode?.toUpperCase() || null,
       couponId: cupom?.id || null,

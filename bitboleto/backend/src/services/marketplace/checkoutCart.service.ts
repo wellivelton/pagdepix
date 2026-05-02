@@ -6,6 +6,7 @@ import { prisma } from '../../prisma';
 import { calculateMarketplaceFees } from '../../utils/marketplaceFees';
 import { generateDepixQr } from '../swapverse';
 import { checkFraudBeforeCheckout } from './fraudFlag.service';
+import { env } from '../../config/env';
 
 export interface CheckoutCartInput {
   buyerId: string;
@@ -209,7 +210,7 @@ export async function createOrderFromCart(input: CheckoutCartInput) {
 
   // Gerar QR Pix via SwapVerse
   const config = await prisma.config.findUnique({ where: { id: 'config' } });
-  const platformWallet = config?.walletAddress || process.env.LIQUID_WALLET_ADDRESS || '';
+  const platformWallet = config?.walletAddress || env.LIQUID_WALLET_ADDRESS;
 
   const qrResult = await generateDepixQr({
     amount: totalAmount.toFixed(2),

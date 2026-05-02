@@ -17,7 +17,9 @@
     "diagnose-commerce": "ts-node scripts/diagnose-commerce-payments.ts",
     "check-swapverse": "ts-node scripts/check-swapverse-integration.ts",
     "sync-commerce-status": "ts-node scripts/sync-commerce-status.ts",
-    "liberar-telegram": "ts-node scripts/liberar-telegram-verificacao.ts"
+    "liberar-telegram": "ts-node scripts/liberar-telegram-verificacao.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -27,8 +29,11 @@
     "@sendgrid/mail": "^8.1.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/web-push": "^3.6.4",
+    "@vulpemventures/secp256k1-zkp": "^3.2.1",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.10.0",
+    "bip32": "^5.0.1",
+    "bitcoinjs-lib": "^7.0.1",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "dayjs": "^1.11.19",
@@ -36,11 +41,14 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "jsonwebtoken": "^9.0.3",
+    "liquidjs-lib": "^6.0.2-liquid.37",
     "multer": "^2.0.2",
     "node-telegram-bot-api": "^0.67.0",
     "prisma": "^6.19.2",
     "qrcode": "^1.5.4",
     "resend": "^6.4.2",
+    "rss-parser": "^3.13.0",
+    "tiny-secp256k1": "^2.2.4",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
@@ -54,7 +62,8 @@
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

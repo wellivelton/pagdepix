@@ -14,6 +14,8 @@ import {
   calculateEstimatedProfit,
 } from '../utils/antifraud';
 import { getRates, convertBrlToUsdt, convertBrlToSats } from './exchangeRate';
+import { isXpubConfigured, getNextAddressIndex, deriveLiquidAddress } from './liquidHdWallet.service';
+import { env } from '../config/env';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +53,7 @@ interface WalletConfig {
 }
 
 const getWalletConfig = async (): Promise<WalletConfig> => {
-  const defaultAddr = process.env.LIQUID_WALLET_ADDRESS || '';
+  const defaultAddr = env.LIQUID_WALLET_ADDRESS;
   try {
     const config = await prisma.config.findUnique({ where: { id: 'config' } });
     if (config) {
@@ -108,7 +110,8 @@ export const createBoletoBatch = async (
 
   // ── 2. Validar cada item individualmente ────────────────────────────────
 
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const hojeStrBrasilia = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const hoje = new Date(hojeStrBrasilia + 'T00:00:00');
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
@@ -117,7 +120,8 @@ export const createBoletoBatch = async (
       return { success: false, error: `${label}: valor mínimo é R$ ${MIN_BOLETO_AMOUNT.toFixed(2)}.` };
     if (!it.barcode && !it.pdfUrl)
       return { success: false, error: `${label}: informe o código de barras ou PDF.` };
-    if (new Date(it.dueDate) < hoje)
+    const dueDateNorm = new Date(String(it.dueDate).slice(0, 10) + 'T00:00:00');
+    if (dueDateNorm < hoje)
       return { success: false, error: `${label}: boleto vencido.` };
   }
 
@@ -226,10 +230,28 @@ export const createBoletoBatch = async (
   }
 
   let wallet: { walletAddress: string; qrCodeUrl: string };
-  try {
-    wallet = pickWallet(walletConfig, currency);
-  } catch (err: any) {
-    return { success: false, error: err.message };
+  let batchLiquidAddressIndex: number | null = null;
+
+  if (isXpubConfigured()) {
+    try {
+      const xpub = process.env.LIQUID_XPUB!;
+      const mbk = process.env.LIQUID_MASTER_BLINDING_KEY!;
+      batchLiquidAddressIndex = await getNextAddressIndex(prisma);
+      const hdAddress = deriveLiquidAddress(xpub, mbk, batchLiquidAddressIndex);
+      wallet = { walletAddress: hdAddress, qrCodeUrl: '' };
+    } catch (err: any) {
+      console.error('[createBoletoBatch] HD derivation failed, falling back to static wallet:', err);
+      batchLiquidAddressIndex = null;
+      try { wallet = pickWallet(walletConfig, currency); } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+  } else {
+    try {
+      wallet = pickWallet(walletConfig, currency);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   }
 
   // ── 6. Criar o batch e cada boleto numa transação ───────────────────────
@@ -245,6 +267,7 @@ export const createBoletoBatch = async (
         grandTotal,
         walletAddress: wallet.walletAddress,
         qrCode: wallet.qrCodeUrl,
+        liquidAddressIndex: batchLiquidAddressIndex,
         paymentCurrency: currency,
         cryptoAmount,
         depixAmount: grandTotal,

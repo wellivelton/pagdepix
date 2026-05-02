@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { env } from "../config/env";
 
 export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -9,7 +10,7 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
   if (!token) return res.status(401).json({ message: "Token inválido" });
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "segredo");
+    const decoded = jwt.verify(token, env.JWT_SECRET);
     (req as any).user = decoded;
     next();
   } catch {

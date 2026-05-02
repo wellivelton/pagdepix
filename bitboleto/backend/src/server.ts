@@ -1,5 +1,7 @@
 // Primeira linha: carregar .env antes de qualquer import (swapverse/routes leem process.env ao carregar)
 require('./loadEnv');
+// Segunda: validar todas as env vars críticas — crasha aqui se alguma estiver faltando ou inválida
+require('./config/env');
 
 const express = require('express');
 const cors = require('cors');
@@ -14,7 +16,9 @@ import { startReleaseSellerBalances } from './jobs/releaseSellerBalances';
 import { startReleaseExpiredReservations } from './jobs/releaseExpiredMarketOrderReservations';
 import { startSyncSendPixOrders } from './jobs/syncSendPixOrders';
 import { startWebhookRetryWorker } from './services/webhookService';
+import { startSyncLiquidPayments } from './jobs/syncLiquidPayments';
 import { resetApiEndUserDailyLimits, resetApiEndUserMonthlyLimits } from './jobs/resetApiEndUserLimits';
+import { startSyncAsaasRecharges } from './jobs/syncAsaasRecharges';
 
 // Logar erros não capturados para diagnóstico
 process.on('uncaughtException', (err) => {
@@ -45,7 +49,12 @@ app.use(cors({
   credentials: true,
   optionsSuccessStatus: 200,
 }));
-app.use(express.json());
+
+app.use(express.json({
+  verify: (req: any, _res: any, buf: Buffer) => {
+    req.rawBody = buf;
+  },
+}));
 
 // Rate limiting geral aplicado a todas as rotas
 app.use('/api', generalRateLimiter);
@@ -136,6 +145,8 @@ app.listen(PORT, () => {
   startReleaseExpiredReservations();
   startSyncSendPixOrders();
   startWebhookRetryWorker();
+  startSyncLiquidPayments();
+  startSyncAsaasRecharges();
 
   // Reset diário de limites por usuário final (às 00:05, via verificação horária)
   const scheduleResets = () => {

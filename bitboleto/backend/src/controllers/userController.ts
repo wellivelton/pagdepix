@@ -19,6 +19,7 @@ import { validateFullName } from '../utils/validation/nameValidation';
 import { validateEmail, isBlockedDomain } from '../utils/validation/emailValidation';
 import { validateWhatsAppBrazil } from '../utils/validation/phoneValidation';
 import { getKycStatus } from '../utils/kyc';
+import { env } from '../config/env';
 
 /**
  * Verificação de email e Telegram: quando "false", o sistema não exige nem envia verificação.
@@ -364,7 +365,7 @@ export const register = async (req: Request, res: Response) => {
         email: user.email, 
         role: user.role 
       },
-      process.env.JWT_SECRET || 'seu-secret-aqui',
+      env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
@@ -523,7 +524,7 @@ export const login = async (req: Request, res: Response) => {
         email: user.email, 
         role: user.role 
       },
-      process.env.JWT_SECRET || 'seu-secret-aqui',
+      env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
@@ -638,19 +639,28 @@ export const getProfile = async (req: Request, res: Response) => {
     const usedTodayRecargas = rechargesHoje._sum.totalAmount ?? 0;
     const usedToday = usedTodayBoletos + usedTodayRecargas;
 
-    const [totalBoletos, totalRecargas] = await Promise.all([
+    const [totalBoletos, totalRecargas, totalPixCC, totalSendPix] = await Promise.all([
       prisma.boleto.aggregate({
         where: { userId, status: 'PAID' },
-        _sum: { totalAmount: true }
+        _sum: { amount: true }
       }),
       prisma.mobileRecharge.aggregate({
         where: { userId, status: 'PAID' },
-        _sum: { totalAmount: true }
+        _sum: { amount: true }
+      }),
+      (prisma as any).pixCopiaCola.aggregate({
+        where: { userId, status: 'APPROVED' },
+        _sum: { valorOriginal: true }
+      }),
+      (prisma as any).sendPixOrder.aggregate({
+        where: { userId, status: 'COMPLETED' },
+        _sum: { amountBrl: true }
       }),
     ]);
     const totalByOperation = {
-      boletos: totalBoletos._sum.totalAmount ?? 0,
-      recargas: totalRecargas._sum.totalAmount ?? 0,
+      boletos: totalBoletos._sum.amount ?? 0,
+      recargas: totalRecargas._sum.amount ?? 0,
+      pix: Number(totalPixCC._sum.valorOriginal ?? 0) + (totalSendPix._sum.amountBrl ?? 0),
     };
 
     // KYC: quando verificação desativada, tratar como nível 2 (acesso total)

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { env } from "../config/env";
 
 const prisma = new PrismaClient();
 
@@ -36,7 +37,7 @@ export const login = async (req: Request, res: Response) => {
 
     const token = jwt.sign(
       { userId: user.id, role: user.role },
-      process.env.JWT_SECRET || "segredo",
+      env.JWT_SECRET,
       { expiresIn: "8h" }
     );
 

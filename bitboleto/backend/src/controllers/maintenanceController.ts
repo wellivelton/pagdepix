@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { env } from '../config/env';
 
 const prisma = new PrismaClient();
 
@@ -74,7 +75,7 @@ export const setMaintenance = async (req: Request, res: Response) => {
       update: updateData,
       create: {
         id: 'config',
-        walletAddress: process.env.LIQUID_WALLET_ADDRESS || 'lq1qqgskhge4cunhw32799ky9wlaavt83xu0klvvz78yg4ugzr3dmq2t0gm4gyfdr59yhaq7anhkg52ha666d0nkys56jh979wyp7',
+        walletAddress: env.LIQUID_WALLET_ADDRESS,
         qrCodeUrl: '/qr-code.png',
         ...updateData
       }

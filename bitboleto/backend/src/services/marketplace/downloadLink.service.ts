@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as path from 'path';
+import { env } from '../../config/env';
 
 const DOWNLOAD_LINK_EXPIRY_MINUTES = 60;
 const DEFAULT_DOWNLOAD_LIMIT = 3;
@@ -10,7 +11,7 @@ const DEFAULT_DOWNLOAD_LIMIT = 3;
  */
 export function generateDownloadToken(entityId: string, fileId: string): string {
   const payload = `${entityId}:${fileId}:${Date.now() + DOWNLOAD_LINK_EXPIRY_MINUTES * 60 * 1000}`;
-  const secret = process.env.JWT_SECRET || 'download-secret';
+  const secret = env.JWT_SECRET;
   const hmac = crypto.createHmac('sha256', secret);
   hmac.update(payload);
   const signature = hmac.digest('hex');
@@ -27,7 +28,7 @@ export function validateDownloadToken(token: string): { orderId: string; fileId:
     if (!orderId || !fileId || !expiryStr || !signature) return null;
     const expiry = parseInt(expiryStr, 10);
     if (Date.now() > expiry) return null;
-    const secret = process.env.JWT_SECRET || 'download-secret';
+    const secret = env.JWT_SECRET;
     const hmac = crypto.createHmac('sha256', secret);
     hmac.update(`${orderId}:${fileId}:${expiryStr}`);
     const expected = hmac.digest('hex');

@@ -6,6 +6,27 @@ import { calculatePixCopiaColaFee, MIN_PIX_COPIA_COLA_AMOUNT, REFERRAL_RATE } fr
 import { notifyAdmin, notifyUserByTelegram } from './telegram.service';
 import { sendNotification } from './push.service';
 import { dispatchWebhook } from './webhookService';
+import { deriveLiquidAddress, getNextAddressIndex, isXpubConfigured, AUTO_MODE_CURRENCIES } from './liquidHdWallet.service';
+import { env } from '../config/env';
+
+// ========================================
+// HELPERS
+// ========================================
+
+// Prisma returns Decimal objects for NUMERIC columns. Convert to plain numbers
+// before sending in JSON responses so the frontend receives numeric types.
+function serializePcc(record: any): any {
+  if (!record) return record;
+  return {
+    ...record,
+    valorOriginal: record.valorOriginal != null ? Number(record.valorOriginal) : record.valorOriginal,
+    taxa:          record.taxa          != null ? Number(record.taxa)          : record.taxa,
+    valorTaxa:     record.valorTaxa     != null ? Number(record.valorTaxa)     : record.valorTaxa,
+    totalFinal:    record.totalFinal    != null ? Number(record.totalFinal)    : record.totalFinal,
+    taxaFixa:      record.taxaFixa      != null ? Number(record.taxaFixa)      : record.taxaFixa,
+    exchangeRate:  record.exchangeRate  != null ? Number(record.exchangeRate)  : record.exchangeRate,
+  };
+}
 
 // ========================================
 // TYPES
@@ -26,6 +47,7 @@ export interface CreatePixCopiaColaInput {
   isSandbox?: boolean;
   userIp?: string;
   deviceFingerprint?: string;
+  autoMode?: boolean; // true = usa endereço xpub + detecção automática; false = fluxo manual
 }
 
 export interface CreatePixCopiaColaResult {
@@ -45,7 +67,7 @@ interface WalletConfig {
 }
 
 async function getWalletConfig(): Promise<WalletConfig> {
-  const fallback = process.env.LIQUID_WALLET_ADDRESS || 'lq1qqgskhge4cunhw32799ky9wlaavt83xu0klvvz78yg4ugzr3dmq2t0gm4gyfdr59yhaq7anhkg52ha666d0nkys56jh979wyp7';
+  const fallback = env.LIQUID_WALLET_ADDRESS;
   try {
     const config = await prisma.config.findUnique({ where: { id: 'config' } });
     if (config?.walletAddress) return {
@@ -88,6 +110,8 @@ export async function calculatePixCopiaColaFeeWithCoupon(
   isValid: boolean;
   error?: string;
   taxa?: number;
+  taxaFixa?: number;
+  taxaVariavel?: number;
   valorTaxa?: number;
   totalFinal?: number;
   cupomValido?: boolean;
@@ -136,7 +160,7 @@ export async function calculatePixCopiaColaFeeWithCoupon(
     }
   }
 
-  const { taxa, valorTaxa, totalFinal } = calculatePixCopiaColaFee(valorOriginal, couponDiscountFraction);
+  const { taxa, taxaFixa, taxaVariavel, valorTaxa, totalFinal } = calculatePixCopiaColaFee(valorOriginal, couponDiscountFraction);
   const cur = (options.paymentCurrency || 'DEPIX').toUpperCase();
 
   let exchangeRate: number | null = null;
@@ -158,6 +182,8 @@ export async function calculatePixCopiaColaFeeWithCoupon(
   return {
     isValid: true,
     taxa,
+    taxaFixa,
+    taxaVariavel,
     valorTaxa,
     totalFinal,
     cupomValido,
@@ -189,19 +215,76 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
       isSandbox = false,
       userIp,
       deviceFingerprint,
+      autoMode = true,
     } = input;
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
     if (user.isBlocked || !user.isActive) return { success: false, error: 'Conta indisponível. Entre em contato com o suporte.' };
 
-    const numValor = Number(valorOriginal);
-    if (!Number.isFinite(numValor) || numValor < MIN_PIX_COPIA_COLA_AMOUNT) {
-      return { success: false, error: `Valor mínimo: R$ ${MIN_PIX_COPIA_COLA_AMOUNT.toFixed(2).replace('.', ',')}.` };
+    let numValor = Number(valorOriginal);
+    if (!Number.isFinite(numValor) || numValor <= 0) {
+      return { success: false, error: 'Valor inválido.' };
     }
 
     const codigoPixTrim = String(codigoPix).trim();
     if (!codigoPixTrim) return { success: false, error: 'Código Pix é obrigatório.' };
+
+    console.log(`[PCC] create iniciado: userId=${userId} valor=${numValor} pixLen=${codigoPixTrim.length} pixPrefix=${codigoPixTrim.slice(0, 20)}...`);
+
+    // ── SEGURANÇA CRÍTICA ──────────────────────────────────────────────────────
+    // Decodificar o código Pix no backend é OBRIGATÓRIO.
+    // O valor da Velora é a única fonte da verdade — nunca o input do usuário.
+    // Isso impede o ataque de submeter PIX de R$5.000 com taxa calculada sobre R$20.
+    const { veloraDecodePixCode } = await import('./velora.service');
+    const pixDecoded = await veloraDecodePixCode(codigoPixTrim);
+    console.log(`[PCC] decode resultado: success=${pixDecoded.success} amount=${pixDecoded.originalAmount} error=${pixDecoded.error}`);
+
+    if (!pixDecoded.success) {
+      console.error(`[PCC] veloraDecodePixCode falhou para userId=${userId}: ${pixDecoded.error}`);
+      const veloraMsg = pixDecoded.error || 'Erro desconhecido';
+      return {
+        success: false,
+        error: `Não foi possível validar o código Pix: ${veloraMsg}. Verifique se o código é correto e tente novamente.`,
+      };
+    }
+
+    if (pixDecoded.originalAmount != null) {
+      // QR code com valor fixo: Velora é a fonte da verdade
+      const diff = Math.abs(pixDecoded.originalAmount - numValor);
+      if (diff > 0.01) {
+        console.warn(
+          `[PCC] Amount mismatch: user submitted R$${numValor.toFixed(2)}, ` +
+          `QR code is R$${pixDecoded.originalAmount.toFixed(2)} — rejecting.`
+        );
+        return {
+          success: false,
+          error: `Valor informado (R$ ${numValor.toFixed(2).replace('.', ',')}) não confere com o código Pix ` +
+                 `(R$ ${pixDecoded.originalAmount.toFixed(2).replace('.', ',')}). O valor não pode ser alterado.`,
+        };
+      }
+      // Usar o valor decodificado como autoritativo (elimina diferenças de float)
+      numValor = pixDecoded.originalAmount;
+    }
+    // Se pixDecoded.originalAmount == null → PIX de valor aberto, usar valor do usuário
+    // ──────────────────────────────────────────────────────────────────────────
+
+    if (numValor < MIN_PIX_COPIA_COLA_AMOUNT) {
+      return { success: false, error: `Valor mínimo: R$ ${MIN_PIX_COPIA_COLA_AMOUNT.toFixed(2).replace('.', ',')}. O código Pix informado é de R$ ${numValor.toFixed(2).replace('.', ',')}.` };
+    }
+
+    const MAX_PCC_AMOUNT = parseFloat(process.env.MAX_PCC_AMOUNT || '10000');
+    if (numValor > MAX_PCC_AMOUNT) {
+      return { success: false, error: `Valor máximo por pedido: R$ ${MAX_PCC_AMOUNT.toFixed(2).replace('.', ',')}. Entre em contato com o suporte para valores maiores.` };
+    }
+
+    const MAX_PENDING = parseInt(process.env.MAX_PCC_PENDING_PER_USER || '3', 10);
+    const pendingCount = await (prisma as any).pixCopiaCola.count({
+      where: { userId, status: 'PENDING' },
+    });
+    if (pendingCount >= MAX_PENDING) {
+      return { success: false, error: `Você já possui ${pendingCount} pedido(s) pendente(s). Conclua os existentes antes de criar um novo.` };
+    }
 
     const nomeDestinatarioTrim = String(nomeDestinatario).trim();
     if (!nomeDestinatarioTrim) return { success: false, error: 'Nome do destinatário é obrigatório.' };
@@ -236,7 +319,7 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
       }
     }
 
-    const { taxa, valorTaxa, totalFinal } = calculatePixCopiaColaFee(numValor, couponDiscountFraction);
+    const { taxa, taxaFixa, valorTaxa, totalFinal } = calculatePixCopiaColaFee(numValor, couponDiscountFraction);
 
     const walletConfig = await getWalletConfig();
     let walletAddress: string;
@@ -262,6 +345,22 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
       rateLockExpiresAt = new Date(Date.now() + walletConfig.rateLockMinutes * 60_000);
     }
 
+    // For supported currencies in auto mode, derive a unique confidential Liquid address.
+    // This enables automatic payment detection via Esplora without user submitting TXID.
+    let liquidAddressIndex: number | null = null;
+    if (AUTO_MODE_CURRENCIES.has(currency) && autoMode && isXpubConfigured()) {
+      try {
+        const xpub = process.env.LIQUID_XPUB!;
+        const masterBlindingKey = process.env.LIQUID_MASTER_BLINDING_KEY!;
+        liquidAddressIndex = await getNextAddressIndex(prisma);
+        walletAddress = deriveLiquidAddress(xpub, masterBlindingKey, liquidAddressIndex);
+      } catch (err) {
+        console.error('[LiquidHD] Failed to derive address, falling back to fixed wallet:', err);
+        liquidAddressIndex = null;
+        // walletAddress keeps the value from pickWallet above
+      }
+    }
+
     const record = await (prisma as any).pixCopiaCola.create({
       data: {
         userId,
@@ -277,6 +376,7 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
         cupomUsado: couponUsed,
         cupomId: couponId,
         paymentCurrency: currency,
+        taxaFixa,
         walletAddress,
         status: 'PENDING',
         affiliateId,
@@ -286,13 +386,14 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
         exchangeRate,
         cryptoAmount,
         rateLockExpiresAt,
+        liquidAddressIndex,
       },
       include: {
         user: { select: { id: true, name: true, email: true, telegram: true } }
       }
     });
 
-    return { success: true, pixCopiaCola: record };
+    return { success: true, pixCopiaCola: serializePcc(record) };
   } catch (e) {
     console.error('Erro ao criar Pix Copia e Cola:', e);
     return { success: false, error: getSafeErrorMessage(e, 'Erro ao criar solicitação. Tente novamente.') };
@@ -316,8 +417,10 @@ export async function submitPixCopiaColaTxid(
     return { success: false, error: 'Só é possível informar TXID em solicitações aguardando pagamento.' };
   }
 
-  const txidTrim = String(txid).trim();
-  if (txidTrim.length < 10) return { success: false, error: 'TXID inválido (mínimo 10 caracteres).' };
+  const txidTrim = String(txid).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txidTrim)) {
+    return { success: false, error: 'TXID inválido. Deve ter exatamente 64 caracteres hexadecimais (0-9, a-f).' };
+  }
 
   // Rate lock
   if (record.rateLockExpiresAt && new Date() > new Date(record.rateLockExpiresAt)) {
@@ -374,7 +477,7 @@ export async function submitPixCopiaColaTxid(
     console.error('[PIX-COPIA-COLA] Erro ao notificar admin (txid):', err);
   }
 
-  return { success: true, pixCopiaCola: updated };
+  return { success: true, pixCopiaCola: serializePcc(updated) };
 }
 
 // ========================================
@@ -407,10 +510,11 @@ export async function listUserPixCopiaCola(
 // GET BY ID (USER)
 // ========================================
 export async function getPixCopiaColaById(id: string, userId: string) {
-  return (prisma as any).pixCopiaCola.findFirst({
+  const record = await (prisma as any).pixCopiaCola.findFirst({
     where: { id, userId },
     include: { user: { select: { id: true, name: true, email: true, telegram: true } } }
   });
+  return record ? serializePcc(record) : null;
 }
 
 // ========================================
@@ -436,7 +540,7 @@ export async function adminListPixCopiaCola(options?: { status?: string; page?: 
     (prisma as any).pixCopiaCola.count({ where })
   ]);
 
-  return { items, total, page, limit };
+  return { items: items.map(serializePcc), total, page, limit };
 }
 
 // ========================================
@@ -454,18 +558,28 @@ export async function adminProcessPixCopiaCola(
   });
 
   if (!record) return { success: false, error: 'Solicitação não encontrada.' };
-  if (record.status !== 'TXID_SUBMITTED') {
+  if (!['TXID_SUBMITTED', 'VELORA_PROCESSING'].includes(record.status)) {
     return { success: false, error: 'Só é possível processar solicitações com TXID informado.' };
   }
 
-  const updated = await (prisma as any).pixCopiaCola.update({
-    where: { id },
+  // Atomic guard: prevents double-approval under concurrent calls (reconcile job + admin UI race).
+  // updateMany returns count=0 if status already changed (e.g., another process won the race).
+  const claimed = await (prisma as any).pixCopiaCola.updateMany({
+    where: { id, status: { in: ['TXID_SUBMITTED', 'VELORA_PROCESSING'] } },
     data: {
       status: action,
       adminNotes: adminNotes?.trim() || null,
       processedAt: new Date(),
       ...(comprovanteAdminUrl ? { comprovante: comprovanteAdminUrl } : {}),
     },
+  });
+  if (claimed.count === 0) {
+    console.warn(`[adminProcessPixCopiaCola] Order ${id} already processed by concurrent call — skipping.`);
+    return { success: false, error: 'Pedido já foi processado.' };
+  }
+
+  const updated = await (prisma as any).pixCopiaCola.findUnique({
+    where: { id },
     include: {
       user: { select: { id: true, name: true, email: true, telegram: true, telegramChatId: true } }
     }
@@ -475,7 +589,7 @@ export async function adminProcessPixCopiaCola(
     // Atualizar totalPaid do usuário
     await prisma.user.update({
       where: { id: record.userId },
-      data: { totalPaid: { increment: record.totalFinal } }
+      data: { totalPaid: { increment: Number(record.totalFinal) } }
     });
 
     // Comissão de indicação (referral)
@@ -484,13 +598,13 @@ export async function adminProcessPixCopiaCola(
       if (owner?.referredByCode) {
         const referrer = await prisma.user.findUnique({ where: { referralCode: owner.referredByCode }, select: { id: true } });
         if (referrer) {
-          const referralCommission = Math.floor(record.valorTaxa * REFERRAL_RATE * 100) / 100;
+          const referralCommission = Math.floor(Number(record.valorTaxa) * REFERRAL_RATE * 100) / 100;
           await (prisma as any).referralEarning.create({
             data: {
               earnerId: referrer.id,
               sourceUserId: record.userId,
               pixCopiaColaId: record.id,
-              feeAmount: record.valorTaxa,
+              feeAmount: Number(record.valorTaxa),
               commission: referralCommission,
             }
           });
@@ -511,14 +625,14 @@ export async function adminProcessPixCopiaCola(
 
         if (!existingTx) {
           // Comissão: 1% do valor principal (split: afiliado 1%, plataforma 2%)
-          const commissionAmount = Math.floor(record.valorOriginal * 0.01 * 100) / 100;
+          const commissionAmount = Math.floor(Number(record.valorOriginal) * 0.01 * 100) / 100;
 
           if (commissionAmount > 0) {
             await prisma.affiliateTransaction.create({
               data: {
                 affiliateId: record.affiliateId,
                 pixCopiaColaId: record.id,
-                amount: record.totalFinal,
+                amount: Number(record.totalFinal),
                 commission: commissionAmount,
                 status: 'AVAILABLE',
                 availableAt: new Date(),
@@ -632,5 +746,198 @@ export async function adminProcessPixCopiaCola(
     }
   }
 
-  return { success: true, pixCopiaCola: updated };
+  return { success: true, pixCopiaCola: serializePcc(updated) };
+}
+
+// ========================================
+// ADMIN: CANCEL
+// ========================================
+export async function adminCancelPixCopiaCola(
+  id: string,
+  reason?: string,
+): Promise<{ success: boolean; error?: string; pixCopiaCola?: any }> {
+  // Atomic: only cancel if still PENDING — prevents race with payment flow
+  const claimed = await (prisma as any).pixCopiaCola.updateMany({
+    where: { id, status: 'PENDING' },
+    data: {
+      status: 'CANCELLED',
+      cancelledAt: new Date(),
+      cancelReason: reason || 'Cancelado pelo administrador',
+      adminNotes: reason || 'Cancelado pelo administrador',
+    },
+  });
+  if (claimed.count === 0) {
+    const record = await (prisma as any).pixCopiaCola.findUnique({ where: { id } });
+    if (!record) return { success: false, error: 'Solicitação não encontrada.' };
+    return { success: false, error: `Não é possível cancelar pedido com status ${record.status}.` };
+  }
+  const updated = await (prisma as any).pixCopiaCola.findUnique({ where: { id } });
+  return { success: true, pixCopiaCola: serializePcc(updated) };
+}
+
+export async function adminCancelAllPending(): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    const result = await (prisma as any).pixCopiaCola.updateMany({
+      where: { status: 'PENDING' },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelReason: 'Cancelamento em massa pelo administrador',
+        adminNotes: 'Cancelamento em massa pelo administrador',
+      },
+    });
+    return { success: true, count: result.count };
+  } catch (err) {
+    console.error('[adminCancelAllPending] erro:', err);
+    return { success: false, count: 0, error: 'Erro ao cancelar pedidos.' };
+  }
+}
+
+// ========================================
+// ADMIN: PAY VIA VELORA
+// ========================================
+export async function adminPayViaVelora(
+  id: string
+): Promise<{ success: boolean; error?: string; pixCopiaCola?: any }> {
+  const record = await (prisma as any).pixCopiaCola.findUnique({ where: { id } });
+  if (!record) return { success: false, error: 'Solicitação não encontrada.' };
+  if (record.status !== 'TXID_SUBMITTED') {
+    return { success: false, error: 'Só é possível pagar solicitações com TXID informado.' };
+  }
+
+  // Rate lock: for USDT/BTC, reject if rate expired — stale exchange rate would cause financial loss.
+  // DEPIX is 1:1 BRL, no rate risk.
+  if (record.paymentCurrency !== 'DEPIX' && record.rateLockExpiresAt && new Date() > new Date(record.rateLockExpiresAt)) {
+    notifyAdmin(
+      `⚠️ *Pagamento bloqueado — cotação expirada* PCC #${id.slice(0, 8)}\n` +
+      `Moeda: ${record.paymentCurrency}\n` +
+      `Cotação expirou em ${new Date(record.rateLockExpiresAt).toISOString()}\n` +
+      `Aprovar manualmente após validar cotação atual.`
+    ).catch(() => {});
+    return { success: false, error: 'Cotação expirada. Valide a cotação atual antes de aprovar manualmente.' };
+  }
+
+  // Atomic idempotency guard: claim the payment slot before calling Velora.
+  // If paidViaVelora is already true (concurrent call or retry), count=0 → abort.
+  // This prevents double-payment even under concurrent execution.
+  const claimed = await (prisma as any).pixCopiaCola.updateMany({
+    where: { id, status: 'TXID_SUBMITTED', paidViaVelora: false },
+    data: { paidViaVelora: true, status: 'VELORA_PROCESSING' },
+  });
+  if (claimed.count === 0) {
+    console.warn(`[adminPayViaVelora] Order ${id} already claimed or in wrong state — aborting.`);
+    return { success: false, error: 'Pagamento já está sendo processado ou já foi enviado.' };
+  }
+
+  const { veloraPayPixQrCode } = await import('./velora.service');
+
+  const veloraResult = await veloraPayPixQrCode(
+    record.codigoPix,
+    Number(record.valorOriginal),  // sempre explícito — nunca deixar Velora decidir o valor
+    `PagDepix PCC #${record.id.slice(0, 8)}`
+  );
+
+  if (!veloraResult.success) {
+    // Release the claim so admin can retry manually.
+    await (prisma as any).pixCopiaCola.update({
+      where: { id },
+      data: { paidViaVelora: false, status: 'TXID_SUBMITTED' },
+    }).catch(() => {});
+    notifyAdmin(
+      `❌ *Falha Velora* PCC #${id.slice(0, 8)}\n` +
+      `Erro: ${veloraResult.error}\n` +
+      `💰 R$ ${record.totalFinal?.toFixed(2)} → ${record.nomeDestinatario}`
+    ).catch(() => {});
+    return { success: false, error: veloraResult.error || 'Falha ao enviar pagamento via Velora.' };
+  }
+
+  // Persist Velora reference (paidViaVelora already set to true by the claim above)
+  await (prisma as any).pixCopiaCola.update({
+    where: { id },
+    data: {
+      veloraExternalId: veloraResult.externalId ?? null,
+      veloraStatus: veloraResult.status ?? 'PENDING',
+    },
+  });
+
+  // Telegram alert: payment confirmed and sent
+  notifyAdmin(
+    `✅ *PIX pago via Velora* PCC #${id.slice(0, 8)}\n` +
+    `💰 R$ ${record.valorOriginal?.toFixed(2)} → ${record.nomeDestinatario}\n` +
+    `🔗 Velora ID: ${veloraResult.externalId ?? 'N/A'}`
+  ).catch(() => {});
+
+  const adminNotes = `Pago via Velora${veloraResult.externalId ? ` (ID: ${veloraResult.externalId})` : ''}`;
+  return adminProcessPixCopiaCola(id, 'APPROVED', adminNotes);
+}
+
+// ========================================
+// ADMIN: PAY VIA ASAAS
+// ========================================
+export async function adminPayViaAsaas(
+  id: string
+): Promise<{ success: boolean; error?: string; pixCopiaCola?: any }> {
+  const record = await (prisma as any).pixCopiaCola.findUnique({ where: { id } });
+  if (!record) return { success: false, error: 'Solicitação não encontrada.' };
+  if (record.status !== 'TXID_SUBMITTED') {
+    return { success: false, error: 'Só é possível pagar solicitações com TXID informado.' };
+  }
+
+  if (record.paymentCurrency !== 'DEPIX' && record.rateLockExpiresAt && new Date() > new Date(record.rateLockExpiresAt)) {
+    notifyAdmin(
+      `⚠️ *Pagamento bloqueado — cotação expirada* PCC #${id.slice(0, 8)}\n` +
+      `Moeda: ${record.paymentCurrency}\n` +
+      `Cotação expirou em ${new Date(record.rateLockExpiresAt).toISOString()}\n` +
+      `Aprovar manualmente após validar cotação atual.`
+    ).catch(() => {});
+    return { success: false, error: 'Cotação expirada. Valide a cotação atual antes de aprovar manualmente.' };
+  }
+
+  // Atomic idempotency guard: claim the slot before calling Asaas.
+  const claimed = await (prisma as any).pixCopiaCola.updateMany({
+    where: { id, status: 'TXID_SUBMITTED', paidViaAsaas: false },
+    data: { paidViaAsaas: true, status: 'ASAAS_PROCESSING' },
+  });
+  if (claimed.count === 0) {
+    console.warn(`[adminPayViaAsaas] Order ${id} already claimed or in wrong state — aborting.`);
+    return { success: false, error: 'Pagamento já está sendo processado ou já foi enviado.' };
+  }
+
+  const { asaasPayPixQrCode } = await import('./asaas.service');
+
+  const asaasResult = await asaasPayPixQrCode(
+    record.codigoPix,
+    Number(record.valorOriginal),
+    `PagDepix PCC #${record.id.slice(0, 8)}`
+  );
+
+  if (!asaasResult.success) {
+    await (prisma as any).pixCopiaCola.update({
+      where: { id },
+      data: { paidViaAsaas: false, status: 'TXID_SUBMITTED' },
+    }).catch(() => {});
+    notifyAdmin(
+      `❌ *Falha Asaas* PCC #${id.slice(0, 8)}\n` +
+      `Erro: ${asaasResult.error}\n` +
+      `💰 R$ ${record.totalFinal?.toFixed(2)} → ${record.nomeDestinatario}`
+    ).catch(() => {});
+    return { success: false, error: asaasResult.error || 'Falha ao enviar pagamento via Asaas.' };
+  }
+
+  await (prisma as any).pixCopiaCola.update({
+    where: { id },
+    data: {
+      asaasExternalId: asaasResult.externalId ?? null,
+      asaasStatus: asaasResult.status ?? 'PENDING',
+    },
+  });
+
+  notifyAdmin(
+    `✅ *PIX pago via Asaas* PCC #${id.slice(0, 8)}\n` +
+    `💰 R$ ${record.valorOriginal?.toFixed(2)} → ${record.nomeDestinatario}\n` +
+    `🔗 Asaas ID: ${asaasResult.externalId ?? 'N/A'}`
+  ).catch(() => {});
+
+  const adminNotes = `Pago via Asaas${asaasResult.externalId ? ` (ID: ${asaasResult.externalId})` : ''}`;
+  return adminProcessPixCopiaCola(id, 'APPROVED', adminNotes);
 }
