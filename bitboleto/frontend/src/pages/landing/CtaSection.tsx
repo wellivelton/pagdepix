@@ -8,7 +8,7 @@ export default function CtaSection() {
   const navigate = useNavigate();
 
   return (
-    <section className="py-20 md:py-28 relative overflow-hidden">
+    <section className="py-12 md:py-20 lg:py-28 relative overflow-hidden">
       {/* Glow de fundo */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="w-[600px] h-[300px] bg-bitcoin/10 rounded-full blur-[80px]" />
@@ -17,19 +17,19 @@ export default function CtaSection() {
       <div className="relative max-w-3xl mx-auto px-4 md:px-6 text-center">
         {/* Badge */}
         <div className="inline-flex items-center gap-2 bg-bitcoin/10 border border-bitcoin/25
-          text-bitcoin text-xs font-semibold px-4 py-2 rounded-full mb-8 tracking-wide">
+          text-bitcoin text-xs font-semibold px-3 py-1.5 md:px-4 md:py-2 rounded-full mb-5 md:mb-8 tracking-wide">
           <span className="w-1.5 h-1.5 rounded-full bg-bitcoin animate-pulse" />
           Gratuito para abrir conta
         </div>
 
-        <h2 className="text-4xl md:text-6xl font-black text-white mb-6 leading-tight">
+        <h2 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-4 md:mb-6 leading-tight">
           Abra agora.{' '}
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-bitcoin to-orange-400">
             Zero burocracia.
           </span>
         </h2>
 
-        <p className="text-lg text-gray-400 mb-10 max-w-xl mx-auto leading-relaxed">
+        <p className="text-base md:text-lg text-gray-400 mb-6 md:mb-10 max-w-xl mx-auto leading-relaxed">
           Mais de 1.000 usuários já usam cripto para pagar contas no Brasil.
           Sem documentos. Sem banco. Em minutos.
         </p>

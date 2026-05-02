@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useNavigate } from 'react-router-dom';
 import {
-  Plus, Trash2, FileText, Upload, Calculator, Copy, Check,
+  Plus, Trash2, FileText, Calculator, Copy, Check,
   AlertCircle, Loader2, QrCode as QrCodeIcon, Tag, X,
-  ArrowRight, Scan,
+  ArrowRight, Scan, Clock, Calendar, ExternalLink,
 } from 'lucide-react';
 import api from '../services/api';
 import { CurrencySelector, formatCryptoAmount, type Currency } from '../components/CurrencySelector';
@@ -18,6 +19,15 @@ function parseAmount(value: string): number {
   return parseFloat(n) || NaN;
 }
 
+function isWithinBusinessHours(): boolean {
+  const now = new Date();
+  const bStr = now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo', hour12: false });
+  const b = new Date(bStr);
+  const day = b.getDay(); // 0=Dom 6=Sáb
+  const h = b.getHours();
+  return day >= 1 && day <= 5 && h >= 9 && h < 18;
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -29,13 +39,9 @@ function fmtBRL(v: number) {
 function newItem(): BoletoItem {
   return {
     id: uid(),
-    mode: 'BARCODE',
     barcode: '',
     amount: '',
     dueDate: '',
-    pdfFile: null,
-    pdfPassword: '',
-    noPassword: false,
   };
 }
 
@@ -43,13 +49,23 @@ function newItem(): BoletoItem {
 
 interface BoletoItem {
   id: string;
-  mode: 'BARCODE' | 'PDF';
   barcode: string;
   amount: string;
   dueDate: string;
-  pdfFile: File | null;
-  pdfPassword: string;
-  noPassword: boolean;
+}
+
+interface DecodedInfo {
+  value: number;
+  dueDate: string | null;
+  companyName: string | null;
+  beneficiaryName: string | null;
+  beneficiaryCpfCnpj: string | null;
+  bank: string | null;
+  discountValue: number;
+  interestValue: number;
+  fineValue: number;
+  allowChangeValue: boolean;
+  isOverdue: boolean;
 }
 
 interface Preview {
@@ -203,22 +219,19 @@ function CopyButton({ text }: { text: string }) {
 // ─── BoletoCard ───────────────────────────────────────────────────────────────
 
 function BoletoCard({
-  item, index, total, preview, previewLoading, onChange, onRemove,
+  item, index, total, preview, previewLoading, decoded, decodeLoading, decodeError, onChange, onRemove,
 }: {
   item: BoletoItem;
   index: number;
   total: number;
   preview: Preview | null;
   previewLoading: boolean;
+  decoded: DecodedInfo | null;
+  decodeLoading: boolean;
+  decodeError: string;
   onChange: (patch: Partial<BoletoItem>) => void;
   onRemove: () => void;
 }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const isDueDateExpired = item.dueDate && new Date(item.dueDate) < today;
-  const amtNum = parseAmount(item.amount);
-  const amtInvalid = !!item.amount && (isNaN(amtNum) || amtNum < 20);
-
   return (
     <div className="bg-app-surface border border-app-stroke rounded-xl overflow-hidden shadow-sm">
       {/* Card header */}
@@ -242,106 +255,99 @@ function BoletoCard({
       </div>
 
       <div className="p-4 space-y-3">
-        {/* Mode toggle */}
-        <div className="flex rounded-lg overflow-hidden border border-app-stroke bg-app-elevated p-0.5 gap-0.5">
-          {(['BARCODE', 'PDF'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => onChange({ mode: m })}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${focusRing} ${
-                item.mode === m
-                  ? 'bg-bitcoin text-black shadow-sm'
-                  : 'text-app-muted hover:text-app-text'
-              }`}
-            >
-              {m === 'BARCODE' ? <Scan className="w-3.5 h-3.5" /> : <Upload className="w-3.5 h-3.5" />}
-              {m === 'BARCODE' ? 'Código de Barras' : 'PDF'}
-            </button>
-          ))}
-        </div>
-
         {/* Barcode input */}
-        {item.mode === 'BARCODE' && (
-          <input
-            type="text"
-            value={item.barcode}
-            onChange={(e) => onChange({ barcode: e.target.value })}
-            placeholder="00000.00000 00000.000000 00000.000000 0 …"
-            className={`${inputCls} font-mono text-xs`}
-          />
-        )}
-
-        {/* PDF upload */}
-        {item.mode === 'PDF' && (
-          <div className="space-y-2">
-            <label className={`flex flex-col items-center justify-center gap-2 p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
-              item.pdfFile
-                ? 'border-bitcoin/40 bg-bitcoin/5'
-                : 'border-app-stroke hover:border-bitcoin/40'
-            }`}>
-              <Upload className={`w-5 h-5 ${item.pdfFile ? 'text-bitcoin' : 'text-app-muted'}`} />
-              <span className="text-xs text-app-muted text-center leading-relaxed">
-                {item.pdfFile ? item.pdfFile.name : 'Clique para selecionar o PDF do boleto'}
-              </span>
-              <input
-                type="file"
-                accept="application/pdf"
-                className="hidden"
-                onChange={(e) => onChange({ pdfFile: e.target.files?.[0] ?? null })}
-              />
-            </label>
-            {!item.noPassword && (
-              <input
-                type="text"
-                value={item.pdfPassword}
-                onChange={(e) => onChange({ pdfPassword: e.target.value })}
-                placeholder="Senha do PDF (se houver)"
-                className={inputCls}
-              />
+        <div className="space-y-1.5">
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Scan className="w-3.5 h-3.5 text-app-muted" />
+            </span>
+            <input
+              type="text"
+              value={item.barcode}
+              onChange={(e) => onChange({ barcode: e.target.value })}
+              placeholder="00000.00000 00000.000000 00000.000000 0 …"
+              className={`${inputCls} font-mono text-xs pl-8 pr-8`}
+            />
+            {decodeLoading && (
+              <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-bitcoin animate-spin" />
             )}
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={item.noPassword}
-                onChange={(e) => onChange({ noPassword: e.target.checked, pdfPassword: '' })}
-                className="w-3.5 h-3.5 rounded border-app-stroke bg-app-elevated text-bitcoin focus:ring-bitcoin"
-              />
-              <span className="text-xs text-app-muted">PDF sem senha</span>
-            </label>
           </div>
-        )}
 
-        {/* Amount + due date */}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-[10px] uppercase tracking-wide font-semibold text-app-subtle mb-1">
-              Valor (R$) <span className="text-red-400 normal-case font-normal">mín. R$ 20</span>
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="20"
-              value={item.amount}
-              onChange={(e) => onChange({ amount: e.target.value })}
-              placeholder="0,00"
-              className={`${inputCls} ${amtInvalid ? 'border-red-500/60 focus:border-red-500' : ''}`}
-            />
-            {amtInvalid && <p className="mt-1 text-[10px] text-red-400">Mínimo R$ 20,00</p>}
-          </div>
-          <div>
-            <label className="block text-[10px] uppercase tracking-wide font-semibold text-app-subtle mb-1">
-              Vencimento
-            </label>
-            <input
-              type="date"
-              value={item.dueDate}
-              onChange={(e) => onChange({ dueDate: e.target.value })}
-              min={new Date().toISOString().split('T')[0]}
-              className={`${inputCls} ${isDueDateExpired ? 'border-red-500/60 focus:border-red-500' : ''}`}
-            />
-            {isDueDateExpired && <p className="mt-1 text-[10px] text-red-400">Boleto vencido</p>}
-          </div>
+          {decoded && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-green-500/10 border border-green-500/30 rounded-lg">
+                <Check className="w-3 h-3 text-green-400 flex-shrink-0" />
+                <span className="text-xs text-green-400 font-medium truncate">
+                  {decoded.beneficiaryName || decoded.companyName || 'Boleto identificado'}
+                </span>
+                {decoded.isOverdue && (
+                  <span className="ml-auto text-[10px] font-semibold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded flex-shrink-0">
+                    Vencido
+                  </span>
+                )}
+              </div>
+              <div className="px-2.5 py-2 bg-app-elevated border border-app-stroke rounded-lg space-y-1 text-[11px]">
+                {item.amount && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Valor</span>
+                    <span className="text-app-text font-semibold">{fmtBRL(parseAmount(item.amount))}</span>
+                  </div>
+                )}
+                {item.dueDate && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Vencimento</span>
+                    <span className={`font-medium ${decoded.isOverdue ? 'text-amber-400' : 'text-app-text'}`}>
+                      {new Date(item.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    </span>
+                  </div>
+                )}
+                {(decoded.beneficiaryName || decoded.companyName) && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Beneficiário</span>
+                    <span className="text-app-text font-medium text-right truncate max-w-[60%]">
+                      {decoded.beneficiaryName || decoded.companyName}
+                    </span>
+                  </div>
+                )}
+                {decoded.beneficiaryCpfCnpj && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">CPF/CNPJ</span>
+                    <span className="text-app-text font-mono">{decoded.beneficiaryCpfCnpj}</span>
+                  </div>
+                )}
+                {decoded.bank && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Banco</span>
+                    <span className="text-app-text">{decoded.bank}</span>
+                  </div>
+                )}
+                {decoded.discountValue > 0 && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Desconto</span>
+                    <span className="text-green-400 font-medium">- {fmtBRL(decoded.discountValue)}</span>
+                  </div>
+                )}
+                {decoded.interestValue > 0 && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Juros</span>
+                    <span className="text-amber-400 font-medium">+ {fmtBRL(decoded.interestValue)}</span>
+                  </div>
+                )}
+                {decoded.fineValue > 0 && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-app-subtle">Multa</span>
+                    <span className="text-amber-400 font-medium">+ {fmtBRL(decoded.fineValue)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {decodeError && (
+            <p className="text-[10px] text-red-400 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3 flex-shrink-0" /> {decodeError}
+            </p>
+          )}
         </div>
 
         <PreviewBox preview={preview} loading={previewLoading} />
@@ -354,7 +360,8 @@ function BoletoCard({
 
 export default function PayBoleto() {
   const { triggerPushActivation } = useNotifications();
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const navigate = useNavigate();
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [items, setItems] = useState<BoletoItem[]>([newItem()]);
   const [paymentCurrency, setPaymentCurrency] = useState<Currency>('DEPIX');
 
@@ -367,17 +374,19 @@ export default function PayBoleto() {
   const [previews, setPreviews] = useState<Record<string, Preview | null>>({});
   const [previewLoading, setPreviewLoading] = useState<Record<string, boolean>>({});
 
+  const [decodedItems, setDecodedItems] = useState<Record<string, DecodedInfo | null>>({});
+  const [decodeLoading, setDecodeLoading] = useState<Record<string, boolean>>({});
+  const [decodeError, setDecodeError] = useState<Record<string, string>>({});
+
   const [globalLoading, setGlobalLoading] = useState(false);
   const [globalError, setGlobalError] = useState('');
   const [batch, setBatch] = useState<BatchState | null>(null);
-  const [txid, setTxid] = useState('');
-  const [txidSubmitted, setTxidSubmitted] = useState(false);
-  const [txidSubmitting, setTxidSubmitting] = useState(false);
-  const [txidError, setTxidError] = useState('');
-  const [rateExpired, setRateExpired] = useState(false);
+  const [paymentDetected, setPaymentDetected] = useState(false);
 
   const couponRef = useRef<HTMLInputElement>(null);
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const decodeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Detectar indicação
   useEffect(() => {
@@ -385,6 +394,24 @@ export default function PayBoleto() {
       if (data.referredByCode) setReferralAutoApplied(true);
     }).catch(() => {});
   }, []);
+
+  // Polling automático de pagamento quando no step 3
+  useEffect(() => {
+    if (step !== 3 || !batch || paymentDetected) return;
+    const poll = async () => {
+      try {
+        const { data } = await api.get(`/boleto/batch/${batch.id}`);
+        if (data.batch?.status === 'PAID') {
+          setPaymentDetected(true);
+          triggerPushActivation('boleto');
+          if (pollingRef.current) clearInterval(pollingRef.current);
+        }
+      } catch {}
+    };
+    poll(); // primeira checagem imediata
+    pollingRef.current = setInterval(poll, 8000);
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [step, batch, paymentDetected, triggerPushActivation]);
 
   // Preview por item
   const fetchPreviewForItem = useCallback(
@@ -432,12 +459,49 @@ export default function PayBoleto() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentCurrency, appliedCoupon]);
 
+  const fetchDecodeForItem = useCallback(async (item: BoletoItem) => {
+    setDecodeLoading((l) => ({ ...l, [item.id]: true }));
+    setDecodeError((e) => ({ ...e, [item.id]: '' }));
+    try {
+      const { data } = await api.post('/boleto/decode', { barcode: item.barcode });
+      setDecodedItems((d) => ({ ...d, [item.id]: data }));
+      setDecodeError((e) => ({ ...e, [item.id]: '' }));
+      setItems((prev) =>
+        prev.map((it) => {
+          if (it.id !== item.id) return it;
+          const newAmount = data.value > 0 ? String(data.value) : it.amount;
+          const newDueDate = data.dueDate ?? it.dueDate;
+          const updated = { ...it, amount: newAmount, dueDate: newDueDate };
+          triggerPreview(updated, appliedCoupon);
+          return updated;
+        }),
+      );
+    } catch (err: any) {
+      const msg = err.response?.data?.error || 'Não foi possível identificar o boleto. Verifique o código digitado.';
+      setDecodeError((e) => ({ ...e, [item.id]: msg }));
+      setDecodedItems((d) => ({ ...d, [item.id]: null }));
+    } finally {
+      setDecodeLoading((l) => ({ ...l, [item.id]: false }));
+    }
+  }, [appliedCoupon, triggerPreview]);
+
+  const triggerDecode = useCallback((item: BoletoItem) => {
+    if (decodeTimers.current[item.id]) clearTimeout(decodeTimers.current[item.id]);
+    const digits = item.barcode.replace(/\D/g, '');
+    if (digits.length < 44) {
+      setDecodedItems((d) => ({ ...d, [item.id]: null }));
+      setDecodeError((e) => ({ ...e, [item.id]: '' }));
+      return;
+    }
+    decodeTimers.current[item.id] = setTimeout(() => fetchDecodeForItem(item), 500);
+  }, [fetchDecodeForItem]);
+
   const updateItem = (id: string, patch: Partial<BoletoItem>) => {
     setItems((prev) =>
       prev.map((it) => {
         if (it.id !== id) return it;
         const updated = { ...it, ...patch };
-        if ('amount' in patch) triggerPreview(updated, appliedCoupon);
+        if ('barcode' in patch) triggerDecode(updated);
         return updated;
       }),
     );
@@ -452,7 +516,11 @@ export default function PayBoleto() {
     setItems((prev) => prev.filter((it) => it.id !== id));
     setPreviews((p) => { const n = { ...p }; delete n[id]; return n; });
     setPreviewLoading((l) => { const n = { ...l }; delete n[id]; return n; });
+    setDecodedItems((d) => { const n = { ...d }; delete n[id]; return n; });
+    setDecodeLoading((l) => { const n = { ...l }; delete n[id]; return n; });
+    setDecodeError((e) => { const n = { ...e }; delete n[id]; return n; });
   };
+
 
   // Cupom
   const handleApplyCoupon = async () => {
@@ -493,18 +561,15 @@ export default function PayBoleto() {
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const label = items.length > 1 ? `Boleto ${i + 1}` : 'Boleto';
-      if (it.mode === 'BARCODE' && !it.barcode.trim())
+      if (!it.barcode.trim())
         return `${label}: informe o código de barras.`;
-      if (it.mode === 'PDF' && !it.pdfFile)
-        return `${label}: selecione o arquivo PDF.`;
+      if (!decodedItems[it.id])
+        return `${label}: aguarde a identificação do boleto.`;
       const amt = parseAmount(it.amount);
-      if (!Number.isFinite(amt) || amt < 20)
-        return `${label}: valor inválido (mínimo R$ 20,00).`;
+      if (!Number.isFinite(amt) || amt <= 0)
+        return `${label}: boleto sem valor identificado.`;
       if (!it.dueDate)
-        return `${label}: informe a data de vencimento.`;
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      if (new Date(it.dueDate) < today)
-        return `${label}: boleto vencido.`;
+        return `${label}: boleto sem data de vencimento identificada.`;
     }
     return null;
   };
@@ -522,30 +587,12 @@ export default function PayBoleto() {
     setGlobalError('');
     setGlobalLoading(true);
     try {
-      // Primeiro: fazer upload dos PDFs que existirem
-      const itemsWithUrls = await Promise.all(
-        items.map(async (it) => {
-          let pdfUrl: string | undefined;
-          if (it.mode === 'PDF' && it.pdfFile) {
-            const fd = new FormData();
-            fd.append('file', it.pdfFile);
-            const { data } = await api.post('/upload/boleto', fd, {
-              headers: { 'Content-Type': 'multipart/form-data' },
-            });
-            pdfUrl = data.url;
-          }
-          return {
-            barcode: it.mode === 'BARCODE' ? it.barcode : undefined,
-            pdfUrl: it.mode === 'PDF' ? pdfUrl : undefined,
-            pdfPassword: it.mode === 'PDF' && !it.noPassword ? it.pdfPassword || undefined : undefined,
-            amount: parseAmount(it.amount),
-            dueDate: it.dueDate,
-          };
-        }),
-      );
-
       const { data } = await api.post('/boleto/batch/create', {
-        items: itemsWithUrls,
+        items: items.map((it) => ({
+          barcode: it.barcode,
+          amount: parseAmount(it.amount),
+          dueDate: it.dueDate,
+        })),
         couponCode: appliedCoupon || undefined,
         paymentCurrency,
       });
@@ -556,22 +603,6 @@ export default function PayBoleto() {
       setGlobalError(e.response?.data?.error || 'Erro ao criar lote de boletos. Tente novamente.');
     } finally {
       setGlobalLoading(false);
-    }
-  };
-
-  // Enviar TXID do lote (um único TXID para todos)
-  const handleSubmitTxid = async () => {
-    if (!batch || !txid) return;
-    setTxidError('');
-    setTxidSubmitting(true);
-    try {
-      await api.post(`/boleto/batch/${batch.id}/txid`, { txid });
-      setTxidSubmitted(true);
-      triggerPushActivation('boleto');
-    } catch (e: any) {
-      setTxidError(e.response?.data?.error || 'Erro ao registrar TXID.');
-    } finally {
-      setTxidSubmitting(false);
     }
   };
 
@@ -602,6 +633,23 @@ export default function PayBoleto() {
       {/* ══ STEP 1 — Boletos ══════════════════════════════════════════════════ */}
       {step === 1 && (
         <div className="space-y-3">
+
+          {/* Lista de boletos */}
+          {items.map((item, i) => (
+            <BoletoCard
+              key={item.id}
+              item={item}
+              index={i}
+              total={items.length}
+              preview={previews[item.id] ?? null}
+              previewLoading={!!previewLoading[item.id]}
+              decoded={decodedItems[item.id] ?? null}
+              decodeLoading={!!decodeLoading[item.id]}
+              decodeError={decodeError[item.id] ?? ''}
+              onChange={(patch) => updateItem(item.id, patch)}
+              onRemove={() => removeItem(item.id)}
+            />
+          ))}
 
           {/* Moeda + cupom */}
           <div className="bg-app-surface border border-app-stroke rounded-xl p-4 space-y-4">
@@ -664,20 +712,6 @@ export default function PayBoleto() {
             </div>
           </div>
 
-          {/* Lista de boletos */}
-          {items.map((item, i) => (
-            <BoletoCard
-              key={item.id}
-              item={item}
-              index={i}
-              total={items.length}
-              preview={previews[item.id] ?? null}
-              previewLoading={!!previewLoading[item.id]}
-              onChange={(patch) => updateItem(item.id, patch)}
-              onRemove={() => removeItem(item.id)}
-            />
-          ))}
-
           {/* Adicionar boleto */}
           {items.length < MAX_BOLETOS && (
             <button
@@ -711,7 +745,7 @@ export default function PayBoleto() {
           <button
             type="button"
             onClick={handleContinue}
-            disabled={items.every((it) => !it.amount || !it.dueDate)}
+            disabled={items.some((it) => !decodedItems[it.id] || !it.amount || !it.dueDate)}
             className={`w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-bitcoin to-orange-500 text-black font-bold rounded-xl hover:opacity-95 active:scale-[0.99] disabled:opacity-50 transition-all text-sm shadow-sm shadow-bitcoin/20 ${focusRing}`}
           >
             <Calculator className="w-4 h-4" />
@@ -743,9 +777,7 @@ export default function PayBoleto() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs text-app-muted font-mono truncate">
-                            {item.mode === 'BARCODE'
-                              ? (item.barcode.slice(0, 32) + (item.barcode.length > 32 ? '…' : ''))
-                              : (item.pdfFile?.name ?? 'PDF')}
+                            {item.barcode.slice(0, 32) + (item.barcode.length > 32 ? '…' : '')}
                           </p>
                           <p className="text-[10px] text-app-subtle">Venc. {new Date(item.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}</p>
                         </div>
@@ -870,7 +902,7 @@ export default function PayBoleto() {
 
             <div className="p-4 space-y-4">
               {batch.rateLockExpiresAt && (
-                <RateLockCountdown expiresAt={batch.rateLockExpiresAt} onExpire={() => setRateExpired(true)} />
+                <RateLockCountdown expiresAt={batch.rateLockExpiresAt} onExpire={() => {}} />
               )}
 
               {/* QR Code */}
@@ -924,78 +956,82 @@ export default function PayBoleto() {
                 <AlertCircle className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-blue-400 leading-relaxed">
                   Envie <strong>exatamente</strong> o valor indicado para o endereço acima.
-                  Esse único pagamento quita todos os boletos do lote.
-                  Após enviar, cole o TXID abaixo.
+                  Um único pagamento quita todos os {batch.itemCount} boleto{batch.itemCount > 1 ? 's' : ''} do lote.
                 </p>
               </div>
 
-              {/* TXID único */}
-              {!txidSubmitted ? (
-                <>
-                  <div>
-                    <label className="block text-[10px] uppercase tracking-wide text-app-subtle font-semibold mb-1.5">
-                      TXID da transação
-                    </label>
-                    <input
-                      type="text"
-                      value={txid}
-                      onChange={(e) => { setTxid(e.target.value); setTxidError(''); }}
-                      placeholder="a1b2c3d4e5f6…"
-                      className={`${inputCls} font-mono text-xs`}
-                    />
+              {/* Status do pagamento */}
+              {!paymentDetected ? (
+                <div className="flex flex-col items-center gap-3 py-4">
+                  <Loader2 className="w-7 h-7 text-bitcoin animate-spin" />
+                  <p className="text-sm font-semibold text-app-text">Aguardando identificação do pagamento…</p>
+                  <p className="text-xs text-app-muted text-center leading-relaxed">
+                    Identificamos automaticamente em até 2 minutos após o envio.
+                    <br />Pode fechar esta página — o pagamento fica salvo e você acompanha em <strong>Histórico</strong>.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Pagamento identificado */}
+                  <div className="flex items-center gap-3 p-3.5 bg-green-500/10 border border-green-500/30 rounded-xl">
+                    <div className="w-8 h-8 bg-green-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                      <Check className="w-4 h-4 text-green-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-green-400">Pagamento identificado!</p>
+                      <p className="text-xs text-app-muted">Já recebemos sua solicitação.</p>
+                    </div>
                   </div>
-                  {txidError && (
-                    <p className="text-xs text-red-400 flex items-center gap-1.5">
-                      <AlertCircle className="w-3 h-3 flex-shrink-0" /> {txidError}
-                    </p>
-                  )}
+
+                  {/* Prazo de processamento */}
+                  <div className="p-3.5 bg-app-elevated border border-app-stroke rounded-xl space-y-3 text-xs">
+                    <div className="flex items-start gap-2">
+                      <Clock className="w-3.5 h-3.5 text-bitcoin flex-shrink-0 mt-0.5" />
+                      <p className="text-app-text leading-relaxed">
+                        Processaremos o pagamento em <strong>até 30 minutos</strong> dentro do horário comercial.
+                      </p>
+                    </div>
+
+                    <div className="flex items-start gap-2">
+                      <Calendar className="w-3.5 h-3.5 text-app-muted flex-shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <p className="text-app-muted font-semibold">Horário de atendimento</p>
+                        <p className="text-app-text">Segunda a Sexta, 9h às 18h (Brasília)</p>
+                        {!isWithinBusinessHours() && (
+                          <p className="text-amber-400 font-medium mt-1">
+                            ⏰ Fora do horário comercial — seu boleto será agendado para o próximo dia útil.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="border-t border-app-stroke pt-3 text-app-muted leading-relaxed">
+                      Após o pagamento pelo PagDepix, o beneficiário pode levar <strong>até 3 dias úteis</strong> para reconhecer o crédito.
+                    </div>
+                  </div>
+
+                  {/* Link comprovante */}
                   <button
                     type="button"
-                    onClick={handleSubmitTxid}
-                    disabled={txidSubmitting || !txid || txid.length < 64 || rateExpired}
-                    className={`w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-bitcoin to-orange-500 text-black font-bold rounded-xl hover:opacity-95 active:scale-[0.99] disabled:opacity-50 transition-all text-sm ${focusRing}`}
+                    onClick={() => navigate('/historico')}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-app-elevated border border-app-stroke text-app-text font-semibold rounded-xl hover:bg-app-stroke/60 text-sm transition-colors"
                   >
-                    {txidSubmitting
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Enviando...</>
-                      : <><Check className="w-4 h-4" /> Já Paguei</>}
+                    <ExternalLink className="w-4 h-4" />
+                    Ver comprovante em Histórico
                   </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setStep(4)}
-                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:opacity-95 active:scale-[0.99] text-sm transition-all shadow-sm shadow-green-500/20"
-                >
-                  <Check className="w-4 h-4" /> Ver Confirmação
-                </button>
+
+                  {/* Novo pagamento */}
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-bitcoin to-orange-500 text-black font-bold rounded-xl hover:opacity-95 active:scale-[0.99] text-sm transition-all"
+                  >
+                    <Plus className="w-4 h-4" /> Fazer Novo Pagamento
+                  </button>
+                </div>
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* ══ STEP 4 — Confirmação ══════════════════════════════════════════════ */}
-      {step === 4 && (
-        <div className="bg-app-surface border border-app-stroke rounded-xl p-8 text-center space-y-5">
-          <div className="w-16 h-16 bg-green-500/15 rounded-full flex items-center justify-center mx-auto">
-            <Check className="w-8 h-8 text-green-400" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-app-text mb-2">
-              {batch && batch.itemCount > 1 ? 'Pagamento Registrado!' : 'Pagamento Registrado!'}
-            </h2>
-            <p className="text-sm text-app-muted leading-relaxed">
-              {batch ? `${batch.itemCount} boleto${batch.itemCount > 1 ? 's' : ''} registrado${batch.itemCount > 1 ? 's' : ''} com sucesso.` : 'Pagamento registrado com sucesso.'}
-              {' '}Aguarde a confirmação do time PagDepix.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-bitcoin to-orange-500 text-black font-bold rounded-xl hover:opacity-95 active:scale-[0.99] text-sm transition-all"
-          >
-            <Plus className="w-4 h-4" /> Fazer Novo Pagamento
-          </button>
         </div>
       )}
     </div>

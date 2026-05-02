@@ -9,23 +9,26 @@ export default function LandingFooter() {
       className="bg-gray-950 border-t border-gray-800/50 relative z-20"
       role="contentinfo"
     >
-      <div className="max-w-7xl mx-auto px-4 py-12 md:px-6 md:py-16">
-        <div className="grid md:grid-cols-4 gap-10 mb-12">
+      <div className="max-w-7xl mx-auto px-4 py-8 md:px-6 md:py-16">
+        <div className="grid grid-cols-3 md:grid-cols-4 gap-6 md:gap-10 mb-8 md:mb-12">
           {/* Brand */}
-          <div className="md:col-span-2 space-y-4">
-            <h3 className="font-black text-white text-xl">PagDepix</h3>
-            <p className="text-gray-500 text-sm leading-relaxed max-w-xs">
+          <div className="col-span-3 md:col-span-2 space-y-2 md:space-y-4">
+            <h3 className="font-black text-white text-base md:text-xl">PagDepix</h3>
+            <p className="text-gray-500 text-xs md:text-sm leading-relaxed max-w-xs hidden md:block">
               A primeira plataforma brasileira que conecta a Liquid Network ao seu dia a dia.
               Pague boletos, recarregue celular e muito mais com Depix, L-USDT e L-BTC.
+            </p>
+            <p className="text-gray-500 text-xs leading-relaxed md:hidden">
+              Liquid Network · Boletos · Recargas · Marketplace
             </p>
           </div>
 
           {/* Navegação */}
           <div>
-            <h4 className="font-bold text-gray-300 text-xs uppercase tracking-widest mb-5">
+            <h4 className="font-bold text-gray-300 text-xs uppercase tracking-widest mb-3 md:mb-5">
               Plataforma
             </h4>
-            <ul className="space-y-3 text-sm text-gray-500">
+            <ul className="space-y-2 md:space-y-3 text-xs md:text-sm text-gray-500">
               <li>
                 <a
                   href="#servicos"
@@ -68,10 +71,10 @@ export default function LandingFooter() {
 
           {/* Legal */}
           <div>
-            <h4 className="font-bold text-gray-300 text-xs uppercase tracking-widest mb-5">
+            <h4 className="font-bold text-gray-300 text-xs uppercase tracking-widest mb-3 md:mb-5">
               Legal
             </h4>
-            <ul className="space-y-3 text-sm text-gray-500">
+            <ul className="space-y-2 md:space-y-3 text-xs md:text-sm text-gray-500">
               <li>
                 <Link to="/termos" className="hover:text-bitcoin transition-colors">
                   Termos de uso
@@ -91,7 +94,7 @@ export default function LandingFooter() {
           </div>
         </div>
 
-        <div className="border-t border-gray-800/50 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div className="border-t border-gray-800/50 pt-5 md:pt-8 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-4">
           <span className="text-xs text-gray-600">
             © {new Date().getFullYear()} PagDepix. Todos os direitos reservados.
           </span>

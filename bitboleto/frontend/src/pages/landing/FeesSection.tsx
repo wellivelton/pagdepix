@@ -10,23 +10,38 @@ const FEE_ROWS = [
 
 export default function FeesSection() {
   return (
-    <section id="taxas-inteligentes" className="bg-gray-900/40 border-y border-gray-800/40 py-20 md:py-28">
+    <section id="taxas-inteligentes" className="bg-gray-900/40 border-y border-gray-800/40 py-12 md:py-20 lg:py-28">
       <div className="max-w-4xl mx-auto px-4 md:px-6">
-        <div className="text-center mb-14">
+        <div className="text-center mb-8 md:mb-14">
           <SectionLabel>Transparência</SectionLabel>
-          <h2 className="text-3xl md:text-5xl font-black text-white">
+          <h2 className="text-2xl md:text-4xl lg:text-5xl font-black text-white">
             Taxas{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-bitcoin to-orange-400">
               sem surpresa
             </span>
           </h2>
-          <p className="text-gray-400 text-base mt-4">
+          <p className="text-gray-400 text-sm md:text-base mt-3 md:mt-4">
             Quanto maior o boleto, menor o percentual. Simples assim.
           </p>
         </div>
 
         <div className="bg-gray-900 rounded-2xl border border-gray-800/60 overflow-hidden shadow-2xl">
-          <div className="overflow-x-auto">
+
+          {/* Mobile: cards por faixa */}
+          <div className="md:hidden divide-y divide-gray-800/40">
+            {FEE_ROWS.map((row, i) => (
+              <div key={i} className="flex items-center justify-between px-4 py-3.5 hover:bg-bitcoin/5 transition-colors">
+                <div>
+                  <div className="text-xs font-medium text-gray-300">{row.range}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">+ {row.fixed} fixo</div>
+                </div>
+                <span className="text-bitcoin font-black text-xl">{row.percent}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop: tabela completa */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm" role="table" aria-label="Tabela de taxas por faixa">
               <thead>
                 <tr className="border-b border-gray-800/60 bg-gray-900/80">
@@ -46,10 +61,7 @@ export default function FeesSection() {
               </thead>
               <tbody className="divide-y divide-gray-800/40">
                 {FEE_ROWS.map((row, i) => (
-                  <tr
-                    key={i}
-                    className="hover:bg-bitcoin/5 transition-colors group"
-                  >
+                  <tr key={i} className="hover:bg-bitcoin/5 transition-colors group">
                     <td className="py-4 px-6 text-gray-300 font-medium">{row.range}</td>
                     <td className="py-4 px-4 text-center">
                       <span className="text-bitcoin font-black text-base">{row.percent}</span>
@@ -62,7 +74,7 @@ export default function FeesSection() {
             </table>
           </div>
 
-          <div className="border-t border-gray-800/60 p-5 flex items-start gap-3 bg-bitcoin/5">
+          <div className="border-t border-gray-800/60 p-4 md:p-5 flex items-start gap-3 bg-bitcoin/5">
             <Info className="w-4 h-4 text-bitcoin flex-shrink-0 mt-0.5" />
             <div className="text-xs text-gray-400 leading-relaxed">
               <span className="font-semibold text-white">Sem limite máximo por boleto.</span>{' '}

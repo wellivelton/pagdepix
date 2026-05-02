@@ -73,6 +73,28 @@ body {
   100% { transform: translateX(-33.33%); }
 }
 
+/* News feed scrollbar — thin, subtle */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.news-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.news-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.news-scroll::-webkit-scrollbar-thumb {
+  background: var(--app-stroke);
+  border-radius: 2px;
+}
+.news-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-subtle);
+}
+
 @keyframes gradient-x {
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -122,6 +144,39 @@ body {
   .animate-pulse-slow,
   .animate-pulse,
   .animate-bounce {
+    animation: none;
+  }
+}
+
+/* Neon rotating border — comet spinning around card edge */
+@keyframes neon-border-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to   { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* StatusBar marquee */
+@keyframes statusbar-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+
+.statusbar-track {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.statusbar-track--animated {
+  animation: statusbar-marquee 40s linear infinite;
+}
+
+.statusbar-track--animated:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusbar-track--animated {
     animation: none;
   }
 }

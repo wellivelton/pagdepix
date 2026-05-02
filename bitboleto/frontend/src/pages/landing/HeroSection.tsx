@@ -19,7 +19,7 @@ export default function HeroSection() {
 
   return (
     <section
-      className="max-w-7xl mx-auto px-4 pt-10 pb-16 md:px-6 md:pt-16 md:pb-28 relative overflow-x-hidden"
+      className="max-w-7xl mx-auto px-4 pt-8 pb-10 md:px-6 md:pt-16 md:pb-28 relative overflow-x-hidden"
       aria-labelledby="hero-heading"
     >
       {/* Ticker de cotações */}
@@ -46,8 +46,8 @@ export default function HeroSection() {
         {/* Coluna esquerda — Copy */}
         <div className="flex flex-col items-start">
           {/* Badge */}
-          <div className="inline-flex items-center gap-2 bg-bitcoin/10 text-bitcoin px-4 py-2
-            rounded-full border border-bitcoin/25 text-xs font-semibold mb-8 tracking-wide">
+          <div className="inline-flex items-center gap-2 bg-bitcoin/10 text-bitcoin px-3 py-1.5 md:px-4 md:py-2
+            rounded-full border border-bitcoin/25 text-xs font-semibold mb-5 md:mb-8 tracking-wide">
             <span className="w-1.5 h-1.5 rounded-full bg-bitcoin animate-pulse" />
             Liquid Network · Sem KYC · Liquidação em minutos
           </div>
@@ -55,7 +55,7 @@ export default function HeroSection() {
           {/* Headline */}
           <h1
             id="hero-heading"
-            className="text-5xl md:text-6xl lg:text-7xl font-black text-white leading-[1.05] mb-6"
+            className="text-4xl md:text-6xl lg:text-7xl font-black text-white leading-[1.05] mb-4 md:mb-6"
           >
             Pague boletos e contas{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-bitcoin via-orange-400 to-yellow-400 animate-gradient-x bg-[length:200%_auto]">
@@ -64,14 +64,14 @@ export default function HeroSection() {
           </h1>
 
           {/* Sub-headline */}
-          <p className="text-lg text-gray-400 leading-relaxed mb-8 max-w-lg">
+          <p className="text-base md:text-lg text-gray-400 leading-relaxed mb-5 md:mb-8 max-w-lg">
             Depix, L-USDT ou L-BTC{' '}
             <span className="text-white font-medium">→ boleto pago</span>. Em minutos.
             Sem banco, sem exchange, sem burocracia.
           </p>
 
           {/* CTAs */}
-          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto mb-10">
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto mb-6 md:mb-10">
             <button
               onClick={() => navigate('/login')}
               aria-label="Abrir conta — ir para login"
@@ -98,7 +98,7 @@ export default function HeroSection() {
           </div>
 
           {/* Trust badges */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-800/60 pt-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-gray-800/60 pt-4 md:pt-6">
             <TrustBadge icon={Shield} label="Auditado" />
             <TrustBadge icon={Lock} label="Confidential Assets" />
             <TrustBadge icon={Zap} label="Liquid Network" />
@@ -106,8 +106,8 @@ export default function HeroSection() {
           </div>
         </div>
 
-        {/* Coluna direita — Visual */}
-        <div className="flex flex-col gap-8 lg:pl-4">
+        {/* Coluna direita — Visual (escondida no mobile) */}
+        <div className="hidden lg:flex flex-col gap-8 lg:pl-4">
           {/* Fluxo de pagamento */}
           <div className="bg-gray-900/60 rounded-2xl border border-gray-800/60 p-6 backdrop-blur-sm">
             <p className="text-xs text-gray-600 uppercase tracking-widest font-semibold mb-5 text-center">
@@ -186,17 +186,17 @@ export default function HeroSection() {
       </div>
 
       {/* Social proof */}
-      <div className="mt-16 pt-8 border-t border-gray-800/50">
-        <div className="flex flex-wrap justify-center gap-x-10 gap-y-4">
+      <div className="mt-8 md:mt-16 pt-6 md:pt-8 border-t border-gray-800/50">
+        <div className="grid grid-cols-4 gap-2 md:flex md:flex-wrap md:justify-center md:gap-x-10 md:gap-y-4">
           {[
-            { value: '1.000+', label: 'usuários ativos' },
+            { value: '1.000+', label: 'usuários' },
             { value: 'R$ 500k+', label: 'processados' },
-            { value: '~2 min', label: 'tempo médio de liquidação' },
-            { value: '0', label: 'documentos exigidos' },
+            { value: '~2 min', label: 'liquidação' },
+            { value: '0 docs', label: 'exigidos' },
           ].map((stat) => (
             <div key={stat.label} className="text-center">
-              <div className="text-xl font-black text-bitcoin">{stat.value}</div>
-              <div className="text-xs text-gray-500 mt-0.5">{stat.label}</div>
+              <div className="text-base md:text-xl font-black text-bitcoin">{stat.value}</div>
+              <div className="text-[10px] md:text-xs text-gray-500 mt-0.5">{stat.label}</div>
             </div>
           ))}
         </div>

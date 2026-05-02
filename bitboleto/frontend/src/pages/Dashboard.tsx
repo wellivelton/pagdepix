@@ -4,7 +4,6 @@ import {
   LogOut,
   Tag,
   Wallet,
-  Send,
   History,
   Settings,
   CreditCard,
@@ -33,8 +32,6 @@ import {
   BarChart3,
   Sun,
   Moon,
-  Bell,
-  BellOff,
   QrCode,
   type LucideIcon,
 } from 'lucide-react';
@@ -44,7 +41,13 @@ import NotificationBell from '../components/NotificationBell';
 import { useCart } from '../contexts/CartContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import ReferralCard from '../components/ReferralCard';
+import StatusBar from '../components/dashboard/StatusBar';
+import TotalProcessadoCard from '../components/dashboard/TotalProcessadoCard';
+import NoticiasFeedCard from '../components/dashboard/NoticiasFeedCard';
+import QuickActionCard from '../components/dashboard/QuickActionCard';
+import IndicacaoCard from '../components/dashboard/IndicacaoCard';
+import ModoComercioBanner from '../components/dashboard/ModoComercioBanner';
+import { useDismissibleBanner } from '../hooks/useDismissibleBanner';
 
 const focusRing = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bitcoin/50';
 
@@ -121,7 +124,9 @@ function isSubmenuActive(pathname: string, item: MenuItem): boolean {
 export default function Dashboard({ children }: { children?: React.ReactNode }) {
   const { itemCount } = useCart();
   const { theme, toggle: toggleTheme } = useTheme();
-  const { permission, isSubscribed, subscribe, unsubscribe } = usePushNotifications();
+  const { permission, subscribe } = usePushNotifications();
+  const { dismissed: merchantBannerDismissed, dismiss: dismissMerchantBanner } =
+    useDismissibleBanner('merchant-banner', { reappearAfterDays: 30 });
   const [user, setUser] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profile, setProfile] = useState<any>(null);
@@ -198,6 +203,11 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
   const isCommerceActive = user.commercePartner === true || user.role === 'COMMERCE';
   const isAdmin = user.role === 'ADMIN';
   const isAffiliate = user.role === 'AFFILIATE';
+
+  const merchantStatus: 'none' | 'pending' | 'verified' =
+    isCommerceActive ? 'verified'
+    : profile?.commerceApplication ? 'pending'
+    : 'none';
 
   const commerceChildren: MenuItem[] = isCommerceActive || isAdmin
     ? [
@@ -581,164 +591,69 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
         {/* Content */}
         <div className="flex-1 p-4 md:p-6">
           {children || (
-            <div className="flex gap-5">
-              {/* Coluna principal */}
-              <div className="flex-1 min-w-0 space-y-3 md:space-y-4">
+            <div className="space-y-4 md:space-y-5">
 
-              {/* 1. Notificações push — topo */}
-              {permission !== 'unsupported' && permission !== 'denied' && !isSubscribed && (
-                <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-bitcoin/10 to-orange-500/10 border border-bitcoin/25 rounded-xl px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-bitcoin flex-shrink-0" />
-                    <div>
-                      <p className="text-xs font-semibold text-app-text leading-tight">Ativar notificações push</p>
-                      <p className="text-[11px] text-app-muted leading-tight">Avisos em tempo real de pagamentos</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={subscribe}
-                    className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-bitcoin text-black text-xs font-bold hover:bg-orange-400 transition-colors"
-                  >
-                    Ativar
-                  </button>
-                </div>
-              )}
-              {permission === 'denied' && (
-                <div className="flex items-center gap-2.5 bg-app-elevated border border-app-stroke rounded-xl px-3 py-2.5">
-                  <BellOff className="w-3.5 h-3.5 text-app-subtle flex-shrink-0" />
-                  <p className="text-[11px] text-app-muted leading-tight">
-                    Notificações bloqueadas — Cadeado → Notificações → Permitir
-                  </p>
-                </div>
-              )}
-              {isSubscribed && (
-                <div className="flex items-center justify-between gap-3 bg-green-500/5 border border-green-500/20 rounded-xl px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Bell className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                    <p className="text-xs font-medium text-app-text leading-tight">Notificações ativas</p>
-                  </div>
-                  <button
-                    onClick={unsubscribe}
-                    className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-app-elevated text-app-muted text-[11px] hover:text-red-400 transition-colors"
-                  >
-                    <BellOff className="w-3 h-3" />
-                    Desativar
-                  </button>
-                </div>
-              )}
+              {/* Status bar — rede Liquid + cotações + push notification */}
+              <StatusBar permission={permission} onSubscribe={subscribe} />
 
-              {/* 2. Banner referral compacto — mobile/tablet (oculto xl+) */}
-              <ReferralCard compact />
-
-              {/* 3. Total processado + slot de anúncio */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Total processado */}
-                <div className="bg-app-surface rounded-xl p-4 border border-app-stroke shadow-card">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-bitcoin/10 rounded-lg">
-                      <Send className="w-3.5 h-3.5 text-bitcoin" />
-                    </div>
-                    <span className="text-[10px] font-semibold text-app-muted uppercase tracking-wide">Total Processado</span>
-                  </div>
-                  <p className="text-2xl md:text-3xl font-bold text-app-text tracking-tight">
-                    R$ {(() => {
-                      const t = profile?.totalByOperation;
-                      const total = t ? (t.boletos + t.recargas) : (user.totalPaid ?? 0);
-                      return Number(total).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-                    })()}
-                  </p>
-                  <p className="text-[11px] text-app-muted mt-1 flex items-center gap-1">
-                    <History className="w-3 h-3" />
-                    Boletos + Recargas
-                  </p>
-                </div>
-
-                {/* Slot de anúncio — banner Modo Comércio até o Google Ads ser ativado */}
-                <button
-                  type="button"
-                  onClick={() => navigate('/comercio/ativar')}
-                  className={`relative overflow-hidden rounded-xl active:scale-[0.99] transition-all group text-left ${focusRing}`}
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-950 via-purple-950/90 to-gray-900" />
-                  <div className="absolute inset-0 bg-gradient-to-br from-bitcoin/5 via-transparent to-purple-500/10" />
-                  <div className="absolute -right-6 -top-6 w-32 h-32 bg-bitcoin/10 rounded-full blur-2xl pointer-events-none" />
-                  <div className="absolute right-4 -bottom-4 w-20 h-20 bg-purple-600/10 rounded-full blur-xl pointer-events-none" />
-                  <div className="relative h-full px-4 py-3.5 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-bitcoin animate-pulse flex-shrink-0" />
-                        <span className="text-[10px] font-bold text-bitcoin uppercase tracking-widest">Modo Comércio</span>
-                      </div>
-                      <p className="text-sm font-bold text-white leading-tight">Receba sem burocracia</p>
-                      <p className="text-[11px] text-white/55 leading-tight mt-0.5">
-                        Cliente paga via Pix · você recebe em cripto
-                      </p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="inline-flex items-center px-2 py-0.5 bg-bitcoin/15 border border-bitcoin/25 rounded-full text-[10px] font-bold text-bitcoin">
-                          0,5% + R$0,99
-                        </span>
-                        <span className="text-[10px] text-white/35">por transação</span>
-                      </div>
-                    </div>
-                    <div className="flex-shrink-0 flex flex-col items-center gap-2">
-                      <div className="p-2 bg-bitcoin/10 rounded-xl border border-bitcoin/20 group-hover:bg-bitcoin/20 transition-colors">
-                        <Store className="w-5 h-5 text-bitcoin" />
-                      </div>
-                      <span className="px-2.5 py-1 bg-bitcoin group-hover:bg-orange-400 text-black text-[11px] font-bold rounded-lg whitespace-nowrap transition-colors">
-                        Ativar agora →
-                      </span>
-                    </div>
-                  </div>
-                </button>
+              {/* KPIs grid: Total processado | Última atividade | Indicação */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
+                <TotalProcessadoCard profile={profile} />
+                <NoticiasFeedCard />
+                <IndicacaoCard />
               </div>
 
-              {/* 4. Ações rápidas */}
-              <div className="bg-app-surface rounded-xl p-3.5 md:p-5 border border-app-stroke shadow-card">
-                <h2 className="text-xs font-bold text-app-muted uppercase tracking-wide mb-3">Ações Rápidas</h2>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => navigate('/pagar')}
-                    className={`flex items-center gap-2.5 p-3 bg-gradient-to-br from-bitcoin to-orange-500 rounded-xl hover:shadow-lg hover:shadow-bitcoin/25 active:scale-[0.98] transition-all text-left ${focusRing}`}
-                  >
-                    <div className="p-1.5 bg-black/15 rounded-lg flex-shrink-0">
-                      <CreditCard className="w-4 h-4 text-black" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-bold text-black text-sm leading-tight">Pagar Boleto</p>
-                      <p className="text-[10px] text-black/65 leading-tight">Via Liquid</p>
-                    </div>
-                  </button>
-
-                  {[
-                    { path: '/recarga', icon: Smartphone, label: 'Recarregar', sub: 'Celular' },
-                    { path: '/area-pix', icon: QrCode, label: 'Área Pix', sub: 'Pix' },
-                    { path: '/loja', icon: ShoppingBag, label: 'Loja', sub: 'Produtos' },
-                  ].map(({ path, icon: Icon, label, sub }) => (
-                    <button
-                      key={path}
-                      type="button"
-                      onClick={() => navigate(path)}
-                      className={`flex items-center gap-2.5 p-3 bg-app-elevated rounded-xl hover:border hover:border-app-stroke active:scale-[0.98] transition-all text-left border border-transparent ${focusRing}`}
-                    >
-                      <div className="p-1.5 bg-app-surface rounded-lg flex-shrink-0 border border-app-stroke">
-                        <Icon className="w-4 h-4 text-app-muted" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-bold text-app-text text-sm leading-tight">{label}</p>
-                        <p className="text-[10px] text-app-muted leading-tight">{sub}</p>
-                      </div>
-                    </button>
-                  ))}
+              {/* Ações rápidas */}
+              <div className="bg-app-surface border border-app-stroke rounded-xl p-5 shadow-card-premium">
+                <p className="text-[11px] font-semibold text-app-subtle uppercase tracking-widest mb-4">
+                  Ações rápidas
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <QuickActionCard
+                    icon={CreditCard}
+                    label="Pagar Boleto"
+                    sublabel="Use Depix, L-USDT e L-Bitcoin"
+                    path="/pagar"
+                    variant="primary"
+                  />
+                  <QuickActionCard
+                    icon={Smartphone}
+                    label="Recargas Pré-pago"
+                    sublabel="Use Depix, L-USDT e L-Bitcoin"
+                    path="/recarga"
+                    variant="primary"
+                  />
+                  <QuickActionCard
+                    icon={QrCode}
+                    label="Área Pix"
+                    sublabel="Copia e Cola · Enviar"
+                    path="/area-pix"
+                  />
+                  <QuickActionCard
+                    icon={Store}
+                    label="Modo Comércio"
+                    sublabel={
+                      merchantStatus === 'verified'
+                        ? 'Ver painel'
+                        : 'Receba pagamentos em cripto'
+                    }
+                    path={merchantStatus === 'verified' ? '/comercio/dashboard' : '/comercio/ativar'}
+                    badge={
+                      merchantStatus === 'verified'
+                        ? { label: 'Ativo', color: 'green' }
+                        : merchantStatus === 'pending'
+                        ? { label: 'Em análise', color: 'yellow' }
+                        : undefined
+                    }
+                  />
                 </div>
               </div>
 
-              </div> {/* fim coluna principal */}
+              {/* Modo Comércio persuasive banner — shown only for non-members */}
+              {merchantStatus === 'none' && !merchantBannerDismissed && !needsKyc && (
+                <ModoComercioBanner onDismiss={dismissMerchantBanner} />
+              )}
 
-              {/* ReferralCard completo — apenas desktop xl+ */}
-              <div className="hidden xl:block w-72 flex-shrink-0">
-                <ReferralCard />
-              </div>
             </div>
           )}
         </div>

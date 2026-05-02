@@ -80,6 +80,8 @@ export default function Admin() {
   const [uploadingRechargeId, setUploadingRechargeId] = useState<string | null>(null);
   const [receiptFilesRecharge, setReceiptFilesRecharge] = useState<Record<string, File | null>>({});
   const [emailModal, setEmailModal] = useState<{ userId: string; userName: string; userEmail: string } | null>(null);
+  const [asaasBoletoLoadingId, setAsaasBoletoLoadingId] = useState<string | null>(null);
+  const [asaasBoletoResults, setAsaasBoletoResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [emailSending, setEmailSending] = useState(false);
@@ -843,6 +845,23 @@ export default function Admin() {
     }
   };
 
+  const handlePayBoletoViaAsaas = async (boletoId: string) => {
+    if (!window.confirm('Pagar este boleto via Asaas? O valor será debitado da conta Asaas.')) return;
+    setAsaasBoletoLoadingId(boletoId);
+    setAsaasBoletoResults((prev) => { const n = { ...prev }; delete n[boletoId]; return n; });
+    try {
+      const { data } = await api.post(`/admin/boleto/${boletoId}/pay-asaas`);
+      setAsaasBoletoResults((prev) => ({ ...prev, [boletoId]: { ok: true, msg: 'Boleto pago via Asaas!' } }));
+      if (data.receiptUrl) window.open(data.receiptUrl, '_blank');
+      await loadBoletos();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || 'Falha ao pagar via Asaas.';
+      setAsaasBoletoResults((prev) => ({ ...prev, [boletoId]: { ok: false, msg } }));
+    } finally {
+      setAsaasBoletoLoadingId(null);
+    }
+  };
+
   const handleApprove = (boletoId: string) => {
     setUploadingId(boletoId);
   };
@@ -1309,13 +1328,33 @@ export default function Admin() {
                       </div>
                     ) : (
                       <>
+                        {boleto.barcode && (
+                          <>
+                            <button
+                              onClick={() => handlePayBoletoViaAsaas(boleto.id)}
+                              disabled={asaasBoletoLoadingId === boleto.id || actionLoading}
+                              className="flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-xl transition-all"
+                            >
+                              {asaasBoletoLoadingId === boleto.id
+                                ? <Loader2 className="w-5 h-5 animate-spin" />
+                                : <Banknote className="w-5 h-5" />}
+                              Pagar com Asaas
+                            </button>
+                            {asaasBoletoResults[boleto.id] && (
+                              <p className={`text-xs text-center font-medium ${asaasBoletoResults[boleto.id].ok ? 'text-green-400' : 'text-red-400'}`}>
+                                {asaasBoletoResults[boleto.id].msg}
+                              </p>
+                            )}
+                          </>
+                        )}
+
                         <button
                           onClick={() => handleApprove(boleto.id)}
                           disabled={actionLoading}
                           className="flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white font-bold py-3 px-6 rounded-xl hover:shadow-2xl hover:shadow-green-500/50 disabled:opacity-50 transition-all"
                         >
                           <CheckCircle2 className="w-5 h-5" />
-                          Aprovar
+                          Aprovar manual
                         </button>
 
                         <button

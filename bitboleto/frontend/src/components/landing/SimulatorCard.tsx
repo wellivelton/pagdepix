@@ -16,13 +16,13 @@ export default function SimulatorCard() {
   } = useSimulator();
 
   return (
-    <div className="bg-gray-900 rounded-2xl p-6 border border-gray-700/60 shadow-2xl md:p-8">
-      <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-        <BarChart3 className="w-5 h-5 text-bitcoin" />
+    <div className="bg-gray-900 rounded-2xl p-4 md:p-8 border border-gray-700/60 shadow-2xl">
+      <h3 className="text-base md:text-lg font-bold text-white mb-4 md:mb-6 flex items-center gap-2">
+        <BarChart3 className="w-4 h-4 md:w-5 md:h-5 text-bitcoin" />
         Simule sua taxa agora
       </h3>
 
-      <div className="space-y-5">
+      <div className="space-y-4 md:space-y-5">
         {/* Input */}
         <div>
           <label

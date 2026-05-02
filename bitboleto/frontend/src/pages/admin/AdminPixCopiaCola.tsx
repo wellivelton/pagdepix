@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   QrCode, Copy, Check, CheckCircle2, XCircle,
-  Loader2, AlertTriangle, ExternalLink, RefreshCw, FileText, Upload,
+  Loader2, AlertTriangle, ExternalLink, RefreshCw, FileText, Upload, Zap,
 } from 'lucide-react';
 import api from '../../services/api';
 
@@ -39,7 +39,7 @@ interface PccItem {
   };
 }
 
-type FilterStatus = 'TXID_SUBMITTED' | 'APPROVED' | 'REJECTED' | 'PENDING' | 'ALL';
+type FilterStatus = 'TXID_SUBMITTED' | 'APPROVED' | 'REJECTED' | 'PENDING' | 'CANCELLED' | 'ALL';
 
 // ========================================
 // HELPERS
@@ -56,6 +56,9 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; className: string }> = {
     PENDING: { label: 'Aguardando pagamento', className: 'bg-yellow-900/40 text-yellow-400 border-yellow-500/30' },
     TXID_SUBMITTED: { label: 'TXID informado', className: 'bg-blue-900/40 text-blue-400 border-blue-500/30' },
+    VELORA_PROCESSING: { label: 'Processando Velora', className: 'bg-purple-900/40 text-purple-400 border-purple-500/30' },
+    ASAAS_PROCESSING: { label: 'Processando Asaas', className: 'bg-blue-900/40 text-blue-300 border-blue-400/30' },
+    CANCELLED: { label: 'Cancelado', className: 'bg-gray-800/60 text-gray-500 border-gray-600/30' },
     APPROVED: { label: 'Aprovado', className: 'bg-green-900/40 text-green-400 border-green-500/30' },
     REJECTED: { label: 'Reprovado', className: 'bg-red-900/40 text-red-400 border-red-500/30' },
     EXPIRED: { label: 'Expirado', className: 'bg-gray-700/40 text-gray-400 border-gray-500/30' },
@@ -78,6 +81,12 @@ export default function AdminPixCopiaCola() {
   const [loading, setLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('TXID_SUBMITTED');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [veloraLoadingId, setVeloraLoadingId] = useState<string | null>(null);
+  const [veloraResults, setVeloraResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [asaasLoadingId, setAsaasLoadingId] = useState<string | null>(null);
+  const [asaasResults, setAsaasResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [cancelLoadingId, setCancelLoadingId] = useState<string | null>(null);
+  const [cancelAllLoading, setCancelAllLoading] = useState(false);
   const [adminNotes, setAdminNotes] = useState<Record<string, string>>({});
   const [uploadFiles, setUploadFiles] = useState<Record<string, File | null>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -139,6 +148,67 @@ export default function AdminPixCopiaCola() {
     }
   };
 
+  const handlePayVelora = async (id: string) => {
+    setVeloraLoadingId(id);
+    setVeloraResults((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    try {
+      await api.post(`/admin/pix-copia-cola/${id}/pay-velora`);
+      setVeloraResults((prev) => ({ ...prev, [id]: { ok: true, msg: 'Pago via Velora com sucesso!' } }));
+      await fetchItems();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || 'Falha ao pagar via Velora.';
+      setVeloraResults((prev) => ({ ...prev, [id]: { ok: false, msg } }));
+    } finally {
+      setVeloraLoadingId(null);
+    }
+  };
+
+  const handlePayAsaas = async (id: string) => {
+    setAsaasLoadingId(id);
+    setAsaasResults((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    try {
+      await api.post(`/admin/pix-copia-cola/${id}/pay-asaas`);
+      setAsaasResults((prev) => ({ ...prev, [id]: { ok: true, msg: 'Pago via Asaas com sucesso!' } }));
+      await fetchItems();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || 'Falha ao pagar via Asaas.';
+      setAsaasResults((prev) => ({ ...prev, [id]: { ok: false, msg } }));
+    } finally {
+      setAsaasLoadingId(null);
+    }
+  };
+
+  const handleCancel = async (id: string) => {
+    if (!window.confirm('Cancelar este pedido? Ação irreversível.')) return;
+    setCancelLoadingId(id);
+    try {
+      await api.post(`/admin/pix-copia-cola/${id}/cancel`);
+      await fetchItems();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Não foi possível cancelar o pedido.');
+    } finally {
+      setCancelLoadingId(null);
+    }
+  };
+
+  const handleCancelAllPending = async () => {
+    const pendingCount = items.filter((i) => i.status === 'PENDING').length;
+    if (!window.confirm(
+      `Cancelar TODOS os ${pendingCount} pedidos pendentes?\n\nEsta ação não pode ser desfeita.`
+    )) return;
+    setCancelAllLoading(true);
+    try {
+      const { data } = await api.post('/admin/pix-copia-cola/cancel-all-pending');
+      await fetchItems();
+      setError('');
+      alert(`${data.count} pedido(s) cancelado(s) com sucesso.`);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Erro ao cancelar pedidos.');
+    } finally {
+      setCancelAllLoading(false);
+    }
+  };
+
   const totalPages = Math.ceil(total / limit);
 
   return (
@@ -152,19 +222,29 @@ export default function AdminPixCopiaCola() {
           </h2>
           <p className="text-sm text-gray-400 mt-0.5">{total} solicitações encontradas</p>
         </div>
-        <button
-          onClick={fetchItems}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-xl text-sm text-gray-400 transition-colors"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Atualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCancelAllPending}
+            disabled={cancelAllLoading || loading}
+            className="flex items-center gap-2 px-3 py-2 bg-red-900/40 hover:bg-red-900/60 border border-red-700/40 disabled:opacity-50 rounded-xl text-sm text-red-400 transition-colors"
+          >
+            {cancelAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+            Cancelar todos pendentes
+          </button>
+          <button
+            onClick={fetchItems}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-xl text-sm text-gray-400 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2">
-        {(['TXID_SUBMITTED', 'PENDING', 'APPROVED', 'REJECTED', 'ALL'] as FilterStatus[]).map((s) => (
+        {(['TXID_SUBMITTED', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'ALL'] as FilterStatus[]).map((s) => (
           <button
             key={s}
             onClick={() => { setFilterStatus(s); setPage(1); }}
@@ -175,7 +255,9 @@ export default function AdminPixCopiaCola() {
             }`}
           >
             {s === 'TXID_SUBMITTED' ? 'TXID Informado' :
-             s === 'ALL' ? 'Todos' : s.charAt(0) + s.slice(1).toLowerCase()}
+             s === 'ALL' ? 'Todos' :
+             s === 'CANCELLED' ? 'Cancelados' :
+             s.charAt(0) + s.slice(1).toLowerCase()}
           </button>
         ))}
       </div>
@@ -347,6 +429,22 @@ export default function AdminPixCopiaCola() {
             </div>
           )}
 
+          {/* Cancelar (PENDING) */}
+          {item.status === 'PENDING' && (
+            <div className="border-t border-gray-700/50 pt-4">
+              <button
+                onClick={() => handleCancel(item.id)}
+                disabled={cancelLoadingId === item.id}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-900/30 hover:bg-red-900/50 border border-red-700/40 disabled:opacity-50 rounded-xl text-red-400 font-semibold text-sm transition-colors"
+              >
+                {cancelLoadingId === item.id
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <XCircle className="w-4 h-4" />}
+                Cancelar pedido
+              </button>
+            </div>
+          )}
+
           {/* Ações (apenas para TXID_SUBMITTED) */}
           {item.status === 'TXID_SUBMITTED' && (
             <div className="border-t border-gray-700/50 pt-4 space-y-3">
@@ -395,18 +493,55 @@ export default function AdminPixCopiaCola() {
                   className="w-full bg-gray-900/50 border border-gray-700 rounded-xl px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-gray-500 text-sm resize-none"
                 />
               </div>
+
+              {/* Botões de pagamento automático */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handlePayVelora(item.id)}
+                  disabled={veloraLoadingId === item.id || asaasLoadingId === item.id || processingId === item.id}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl text-white font-semibold text-sm transition-colors"
+                >
+                  {veloraLoadingId === item.id
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Zap className="w-4 h-4" />}
+                  Pagar com Velora
+                </button>
+                <button
+                  onClick={() => handlePayAsaas(item.id)}
+                  disabled={asaasLoadingId === item.id || veloraLoadingId === item.id || processingId === item.id}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 rounded-xl text-white font-semibold text-sm transition-colors"
+                >
+                  {asaasLoadingId === item.id
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Zap className="w-4 h-4" />}
+                  Pagar com Asaas
+                </button>
+              </div>
+
+              {veloraResults[item.id] && (
+                <p className={`text-xs font-medium text-center ${veloraResults[item.id].ok ? 'text-green-400' : 'text-red-400'}`}>
+                  {veloraResults[item.id].msg}
+                </p>
+              )}
+
+              {asaasResults[item.id] && (
+                <p className={`text-xs font-medium text-center ${asaasResults[item.id].ok ? 'text-green-400' : 'text-red-400'}`}>
+                  {asaasResults[item.id].msg}
+                </p>
+              )}
+
               <div className="flex gap-3">
                 <button
                   onClick={() => handleProcess(item.id, 'APPROVED')}
-                  disabled={processingId === item.id}
+                  disabled={processingId === item.id || veloraLoadingId === item.id}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 rounded-xl text-white font-semibold text-sm transition-colors"
                 >
                   {processingId === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  Aprovar
+                  Aprovar manual
                 </button>
                 <button
                   onClick={() => handleProcess(item.id, 'REJECTED')}
-                  disabled={processingId === item.id}
+                  disabled={processingId === item.id || veloraLoadingId === item.id}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 rounded-xl text-white font-semibold text-sm transition-colors"
                 >
                   {processingId === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}

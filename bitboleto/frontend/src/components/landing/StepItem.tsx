@@ -21,11 +21,11 @@ export default function StepItem({ num, title, desc, isLast }: Props) {
       </div>
 
       {/* Conteúdo */}
-      <div className="pb-8">
-        <h3 className="text-base font-bold text-white mb-1 group-hover:text-bitcoin transition-colors">
+      <div className="pb-5 md:pb-8">
+        <h3 className="text-sm md:text-base font-bold text-white mb-1 group-hover:text-bitcoin transition-colors">
           {title}
         </h3>
-        <p className="text-sm text-gray-400 leading-relaxed">{desc}</p>
+        <p className="text-xs md:text-sm text-gray-400 leading-relaxed">{desc}</p>
       </div>
     </div>
   );
