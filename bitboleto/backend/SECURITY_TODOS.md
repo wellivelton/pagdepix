@@ -38,6 +38,13 @@
 - Ação: aplicar rate limit específico para rotas /webhook/* num bloco futuro
   de hardening (separado do rate limit geral de usuários)
 
+## Refresh token não implementado — usuário precisa fazer login após 8h
+
+- Todos os jwt.sign foram unificados para expiresIn: '8h' no Bloco 4
+- Sem refresh token: sessão expira silenciosamente — usuário é deslogado
+- Risco: UX ruim em sessões longas; tokens não podem ser revogados antes do vencimento
+- Ação: implementar refresh token (armazenado em httpOnly cookie) num bloco futuro
+
 ## Sistema de referral earnings é apenas log — saldo do indicador nunca é creditado
 
 - Arquivos: pixCopiaCola.ts, mobileRecharge.ts, approveBoleto.ts

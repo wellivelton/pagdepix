@@ -1,19 +1,34 @@
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
-import { env } from "../config/env";
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { env } from '../config/env';
+
+interface JwtPayload {
+  userId: string;
+  email: string;
+  role: string;
+}
 
 export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ message: "Token não fornecido" });
+  const token = authHeader?.startsWith('Bearer ')
+    ? authHeader.replace('Bearer ', '')
+    : undefined;
 
-  const token = authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ message: "Token inválido" });
+  if (!token) {
+    return res.status(401).json({ error: 'Token não fornecido' });
+  }
 
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET);
-    (req as any).user = decoded;
+    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+    (req as any).userId = decoded.userId;
+    (req as any).userRole = decoded.role;
+    (req as any).user = {
+      id: decoded.userId,
+      email: decoded.email,
+      role: decoded.role,
+    };
     next();
   } catch {
-    res.status(401).json({ message: "Token inválido" });
+    return res.status(401).json({ error: 'Token inválido' });
   }
 };

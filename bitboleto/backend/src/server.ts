@@ -5,6 +5,7 @@ require('./config/env');
 
 const express = require('express');
 const cors = require('cors');
+import helmet from 'helmet';
 import routes from './routes/index';
 import apiV1Routes from './routes/apiV1Routes';
 import { generalRateLimiter } from './middlewares/rateLimiter';
@@ -48,6 +49,11 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-API-Secret'],
   credentials: true,
   optionsSuccessStatus: 200,
+}));
+
+app.use(helmet({
+  contentSecurityPolicy: false,      // CSP desativado — React frontend requer config separada
+  crossOriginEmbedderPolicy: false,  // necessário para recursos externos (PDFs, imagens)
 }));
 
 app.use(express.json({

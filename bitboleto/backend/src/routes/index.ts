@@ -1,7 +1,7 @@
 import { Router, Request } from 'express';
-import { env } from '../config/env';
 import { notifyRechargeApproved } from '../services/push.service';
-import * as jwt from 'jsonwebtoken';
+import { authMiddleware } from '../middlewares/authMiddleware';
+import { requireAdmin } from '../middlewares/adminMiddleware';
 import multer, { File as MulterFile } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -432,45 +432,6 @@ ${allUrls
   }
 });
 
-// ========================================
-// MIDDLEWARE DE AUTENTICAÇÃO
-// ========================================
-interface JwtPayload {
-  userId: string;
-  email: string;
-  role: string;
-}
-
-const authMiddleware = (req: any, res: any, next: any) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ')
-    ? authHeader.replace('Bearer ', '')
-    : undefined;
-  
-  if (!token) {
-    return res.status(401).json({ error: 'Token não fornecido' });
-  }
-
-  try {
-    const decoded = jwt.verify(
-      token,
-      env.JWT_SECRET
-    ) as JwtPayload;
-
-    req.userId = decoded.userId;
-    req.userRole = decoded.role;
-    req.user = {
-      id: decoded.userId,
-      email: decoded.email,
-      role: decoded.role,
-    };
-    
-    next();
-  } catch (error) {
-    return res.status(401).json({ error: 'Token inválido' });
-  }
-};
-
 import { maintenanceMiddleware } from '../middlewares/maintenanceMiddleware';
 
 const { getKycStatus } = require('../utils/kyc');
@@ -544,6 +505,7 @@ const requireKyc2 = async (req: any, res: any, next: any) => {
 };
 
 const protectedRoute = [authMiddleware, maintenanceMiddleware];
+const protectedAdminRoute = [authMiddleware, maintenanceMiddleware, requireAdmin];
 const protectedAndVerifiedRoute = [authMiddleware, maintenanceMiddleware, requireKyc1];
 const protectedKyc2Route = [authMiddleware, maintenanceMiddleware, requireKyc2];
 
@@ -1174,7 +1136,7 @@ router.get('/receber-pix/:id/status', depixRemovedHandler);
 // router.get('/receber-pix/:id/status', ...)
 
 // Admin: listar recargas e marcar como pago
-router.get('/admin/recharges', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.get('/admin/recharges', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const { status, page, limit } = req.query;
@@ -1191,7 +1153,7 @@ router.get('/admin/recharges', ...protectedAndVerifiedRoute, async (req: any, re
   }
 });
 
-router.post('/admin/recharge/:id/paid', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.post('/admin/recharge/:id/paid', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const result = await adminMarkRechargePaid(req.params.id);
@@ -1207,7 +1169,7 @@ router.post('/admin/recharge/:id/paid', ...protectedAndVerifiedRoute, async (req
 });
 
 // Aprovar recarga. Com Asaas configurado, comprovante é opcional.
-router.post('/admin/recharge/:id/approve', ...protectedAndVerifiedRoute, uploadRecharge.single('file'), async (req: any, res) => {
+router.post('/admin/recharge/:id/approve', ...protectedAdminRoute, uploadRecharge.single('file'), async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const rechargeId = req.params?.id;
@@ -1231,7 +1193,7 @@ router.post('/admin/recharge/:id/approve', ...protectedAndVerifiedRoute, uploadR
   }
 });
 
-router.post('/admin/recharge/:id/reject', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.post('/admin/recharge/:id/reject', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const rechargeId = req.params?.id;
@@ -1383,7 +1345,7 @@ router.put('/pix-copia-cola/:id/txid', ...protectedAndVerifiedRoute, uploadPixCo
 });
 
 // Admin: cancelar todos pendentes (estático — deve vir antes de /:id)
-router.post('/admin/pix-copia-cola/cancel-all-pending', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.post('/admin/pix-copia-cola/cancel-all-pending', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
     const result = await adminCancelAllPending();
@@ -1396,7 +1358,7 @@ router.post('/admin/pix-copia-cola/cancel-all-pending', ...protectedAndVerifiedR
 });
 
 // Admin: listar
-router.get('/admin/pix-copia-cola', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.get('/admin/pix-copia-cola', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
     const page = Number(req.query.page) || 1;
@@ -1411,7 +1373,7 @@ router.get('/admin/pix-copia-cola', ...protectedAndVerifiedRoute, async (req: an
 });
 
 // Admin: cancelar individual
-router.post('/admin/pix-copia-cola/:id/cancel', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.post('/admin/pix-copia-cola/:id/cancel', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
     const { reason } = req.body;
@@ -1425,7 +1387,7 @@ router.post('/admin/pix-copia-cola/:id/cancel', ...protectedAndVerifiedRoute, as
 });
 
 // Admin: aprovar / reprovar
-router.post('/admin/pix-copia-cola/:id/process', ...protectedAndVerifiedRoute, uploadPixCopiaCola.single('comprovante'), async (req: any, res) => {
+router.post('/admin/pix-copia-cola/:id/process', ...protectedAdminRoute, uploadPixCopiaCola.single('comprovante'), async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
     const { action, adminNotes } = req.body;
@@ -1475,7 +1437,7 @@ router.post('/pix-copia-cola/decode', ...protectedAndVerifiedRoute, async (req: 
 });
 
 // Admin: pagar via Velora
-router.post('/admin/pix-copia-cola/:id/pay-velora', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.post('/admin/pix-copia-cola/:id/pay-velora', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
     const result = await adminPayViaVelora(req.params.id);
@@ -1488,7 +1450,7 @@ router.post('/admin/pix-copia-cola/:id/pay-velora', ...protectedAndVerifiedRoute
 });
 
 // Admin: pagar via Asaas
-router.post('/admin/pix-copia-cola/:id/pay-asaas', ...protectedAndVerifiedRoute, async (req: any, res) => {
+router.post('/admin/pix-copia-cola/:id/pay-asaas', ...protectedAdminRoute, async (req: any, res) => {
   try {
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado.' });
     const result = await adminPayViaAsaas(req.params.id);
@@ -1633,21 +1595,21 @@ if (typeof getPaymentHistory === 'function') {
 }
 // Admin: Métricas de todos os comerciantes
 if (typeof getAllMerchantsMetrics === 'function') {
-  router.get('/admin/commerce/merchants/metrics', ...protectedAndVerifiedRoute, getAllMerchantsMetrics);
+  router.get('/admin/commerce/merchants/metrics', ...protectedAdminRoute, getAllMerchantsMetrics);
 }
 // Admin: Criar conta de comerciante para terceiros (trusted merchant - sem CNPJ/depósito)
 if (typeof adminCreateTrustedMerchant === 'function') {
-  router.post('/admin/commerce/create-trusted-merchant', ...protectedAndVerifiedRoute, adminCreateTrustedMerchant);
+  router.post('/admin/commerce/create-trusted-merchant', ...protectedAdminRoute, adminCreateTrustedMerchant);
 }
 // Admin: atualizar taxas de comerciante
 if (typeof updateMerchantFees === 'function') {
-  router.put('/admin/commerce/merchant/:partnerId/fees', ...protectedAndVerifiedRoute, updateMerchantFees);
+  router.put('/admin/commerce/merchant/:partnerId/fees', ...protectedAdminRoute, updateMerchantFees);
 }
 if (typeof adminListPendingCollaterals === 'function') {
-  router.get('/admin/commerce/collaterals/pending', ...protectedAndVerifiedRoute, adminListPendingCollaterals);
+  router.get('/admin/commerce/collaterals/pending', ...protectedAdminRoute, adminListPendingCollaterals);
 }
 if (typeof adminProcessCollateral === 'function') {
-  router.post('/admin/commerce/collateral/:depositId/process', ...protectedAndVerifiedRoute, adminProcessCollateral);
+  router.post('/admin/commerce/collateral/:depositId/process', ...protectedAdminRoute, adminProcessCollateral);
 }
 // Páginas pré-prontas (comerciante logado)
 if (typeof listPages === 'function') {
@@ -1688,7 +1650,7 @@ try {
 }
 
 // Rotas admin carregadas com require tardio para evitar dependência circular
-registerAdminRoutes(router, protectedRoute, upload, uploadRecharge, uploadNotification, uploadAffiliateReceipts);
+registerAdminRoutes(router, protectedAdminRoute, upload, uploadRecharge, uploadNotification, uploadAffiliateReceipts);
 
 // Marketplace (loja de produtos digitais)
 registerMarketplaceRoutes(router, protectedRoute, protectedAndVerifiedRoute);

@@ -77,7 +77,6 @@ export const bruteForceProtection = async (
     next();
   } catch (error) {
     console.error('Erro no middleware de brute force:', error);
-    // Em caso de erro, permite continuar (fail open)
-    next();
+    return res.status(429).json({ error: 'Serviço temporariamente indisponível. Tente novamente em instantes.' });
   }
 };

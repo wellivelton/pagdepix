@@ -360,13 +360,9 @@ export const register = async (req: Request, res: Response) => {
 
     // Gerar token JWT
     const token = jwt.sign(
-      { 
-        userId: user.id, 
-        email: user.email, 
-        role: user.role 
-      },
+      { userId: user.id, email: user.email, role: user.role },
       env.JWT_SECRET,
-      { expiresIn: '7d' }
+      { algorithm: 'HS256', expiresIn: '8h' }
     );
 
     return res.status(201).json({
@@ -519,13 +515,9 @@ export const login = async (req: Request, res: Response) => {
 
     // Gerar token
     const token = jwt.sign(
-      { 
-        userId: user.id, 
-        email: user.email, 
-        role: user.role 
-      },
+      { userId: user.id, email: user.email, role: user.role },
       env.JWT_SECRET,
-      { expiresIn: '7d' }
+      { algorithm: 'HS256', expiresIn: '8h' }
     );
 
     // Registrar tentativa bem-sucedida de login (brute force protection)
