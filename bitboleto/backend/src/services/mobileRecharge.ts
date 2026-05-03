@@ -398,6 +398,7 @@ export async function createRecharge(input: CreateRechargeInput): Promise<Create
               exchangeRate: exchangeRateVal,
               cryptoAmount: cryptoAmountVal,
               rateLockExpiresAt,
+              userIp: userIp || '',
             },
             include: {
               user: { select: { id: true, name: true, email: true, telegram: true } }
@@ -686,7 +687,7 @@ export async function finalizeApprovedRecharge(
             userId: recharge.userId,
             userEmail: (recharge as any).user?.email ?? '',
             userTelegram: (recharge as any).user?.telegram ?? '',
-            userIp: '', // TODO: store userIp on MobileRecharge and pass it here
+            userIp: (recharge as any).userIp ?? '',
             mobileRechargeId: recharge.id,
           },
         });

@@ -409,6 +409,7 @@ export async function createPixCopiaCola(input: CreatePixCopiaColaInput): Promis
               cryptoAmount,
               rateLockExpiresAt,
               liquidAddressIndex,
+              userIp: userIp || '',
             },
             include: {
               user: { select: { id: true, name: true, email: true, telegram: true } },
@@ -697,7 +698,7 @@ export async function adminProcessPixCopiaCola(
             userId: record.userId,
             userEmail: record.user?.email ?? '',
             userTelegram: record.user?.telegram ?? '',
-            userIp: '', // TODO: capture IP at PCC creation time and store on the PCC record
+            userIp: record.userIp ?? '',
             pixCopiaColaId: record.id,
           },
         });

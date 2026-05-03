@@ -947,6 +947,7 @@ model MobileRecharge {
   asaasRechargeId    String?
   asaasStatus        String?
   liquidAddressIndex Int?    @unique
+  userIp             String  @default("")
 
   user      User       @relation(fields: [userId], references: [id])
   affiliate Affiliate? @relation(fields: [affiliateId], references: [id])
@@ -1005,6 +1006,7 @@ model PixCopiaCola {
   paidViaAsaas      Boolean           @default(false)
 
   liquidAddressIndex Int?             @unique
+  userIp             String           @default("")
 
   user      User       @relation(fields: [userId], references: [id])
   coupon    Coupon?    @relation(fields: [cupomId], references: [id])
