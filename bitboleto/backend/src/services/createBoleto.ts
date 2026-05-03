@@ -36,7 +36,6 @@ import {
 import {
   isUserVerified,
   validateCouponUsage,
-  logCouponUsage,
   calculateEstimatedProfit
 } from '../utils/antifraud';
 
@@ -308,10 +307,8 @@ export const createBoleto = async (
 
     if (isXpubConfigured()) {
       try {
-        const xpub = process.env.LIQUID_XPUB!;
-        const mbk = process.env.LIQUID_MASTER_BLINDING_KEY!;
         liquidAddressIndex = await getNextAddressIndex(prisma);
-        const hdAddress = deriveLiquidAddress(xpub, mbk, liquidAddressIndex);
+        const hdAddress = deriveLiquidAddress(env.LIQUID_XPUB, env.LIQUID_MASTER_BLINDING_KEY, liquidAddressIndex);
         wallet = { walletAddress: hdAddress, qrCodeUrl: '' };
       } catch (err: any) {
         console.error('[createBoleto] HD derivation failed, falling back to static wallet:', err);
@@ -329,7 +326,7 @@ export const createBoleto = async (
     }
 
     // ========================================
-    // 4. CRIAR BOLETO NO BANCO
+    // 4. CRIAR BOLETO NO BANCO (com $transaction + FOR UPDATE no cupom + retry P2002)
     // ========================================
     const boletoData: any = {
       userId,
@@ -353,53 +350,82 @@ export const createBoleto = async (
       cryptoAmount,
       rateLockExpiresAt,
     };
-    
-    const boleto = await prisma.boleto.create({
-      data: boletoData,
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            telegram: true
-          }
-        },
-        coupon: true,
-        affiliate: {
-          select: {
-            id: true,
-            userId: true,
-            couponCode: true
-          }
-        }
-      }
-    });
 
-    // ========================================
-    // 6. REGISTRAR USO DO CUPOM (AUDITORIA)
-    // ========================================
-    if (cupom && couponCode) {
-      await logCouponUsage(
-        cupom.id,
-        userId,
-        user.email,
-        user.telegram,
-        userIp,
-        deviceFingerprint,
-        boleto.id
-      );
-      // NÃO incrementar usageCount aqui - será incrementado apenas quando o boleto for aprovado
+    const MAX_INDEX_RETRIES = 3;
+    let boleto: any;
+    for (let attempt = 0; attempt <= MAX_INDEX_RETRIES; attempt++) {
+      try {
+        boleto = await prisma.$transaction(async (tx) => {
+          // FOR UPDATE on coupon to prevent exhaustion race
+          if (cupom) {
+            const rows: any[] = await tx.$queryRaw`
+              SELECT id, "usageCount", "maxUsage", "isActive"
+              FROM "Coupon"
+              WHERE id = ${cupom.id}
+              FOR UPDATE
+            `;
+            const locked = rows[0];
+            if (!locked?.isActive) throw new Error('COUPON_INACTIVE');
+            if (locked.maxUsage != null && locked.usageCount >= locked.maxUsage) {
+              throw new Error('COUPON_EXHAUSTED');
+            }
+          }
+
+          const created = await tx.boleto.create({
+            data: boletoData,
+            include: {
+              user: { select: { id: true, name: true, email: true, telegram: true } },
+              coupon: true,
+              affiliate: { select: { id: true, userId: true, couponCode: true } },
+            },
+          });
+
+          // CouponUsage inside same tx (Q5: atomicity with boleto.create)
+          if (cupom && couponCode) {
+            await tx.couponUsage.create({
+              data: {
+                couponId: cupom.id,
+                userId,
+                userEmail: user.email.toLowerCase(),
+                userTelegram: (user.telegram ?? '').toLowerCase(),
+                userIp,
+                deviceFingerprint: deviceFingerprint || null,
+                boletoId: created.id,
+              },
+            });
+          }
+
+          return created;
+        }, { timeout: 5000 });
+        break; // success — exit retry loop
+      } catch (err: any) {
+        if (err?.message === 'COUPON_EXHAUSTED') return { success: false, error: 'Cupom esgotado.' };
+        if (err?.message === 'COUPON_INACTIVE') return { success: false, error: 'Cupom inativo.' };
+        if (err?.code === 'P2002' && liquidAddressIndex !== null && attempt < MAX_INDEX_RETRIES) {
+          try {
+            liquidAddressIndex = await getNextAddressIndex(prisma);
+            const newAddr = deriveLiquidAddress(env.LIQUID_XPUB, env.LIQUID_MASTER_BLINDING_KEY, liquidAddressIndex);
+            boletoData.walletAddress = newAddr;
+            boletoData.liquidAddressIndex = liquidAddressIndex;
+          } catch (_hdErr) {
+            liquidAddressIndex = null;
+            boletoData.liquidAddressIndex = null;
+            try {
+              const fallback = pickWallet(walletConfig, currency);
+              boletoData.walletAddress = fallback.walletAddress;
+              boletoData.qrCode = fallback.qrCodeUrl;
+            } catch (wErr: any) {
+              return { success: false, error: wErr.message };
+            }
+          }
+          continue;
+        }
+        throw err;
+      }
     }
 
     // ========================================
-    // 7. NÃO CRIAR COMISSÃO AQUI
-    // ========================================
-    // A comissão será criada apenas quando o boleto for aprovado (approveBoleto)
-    // Isso garante que só contabilizamos após pagamento confirmado
-
-    // ========================================
-    // 8. REGISTRAR LOG
+    // 7. REGISTRAR LOG (fora da tx — não crítico)
     // ========================================
     await prisma.log.create({
       data: {

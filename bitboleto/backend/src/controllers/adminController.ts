@@ -8,6 +8,7 @@ const notifyUserByTelegram = telegramService.notifyUserByTelegram ?? (async () =
 import { dispatchWebhook } from '../services/webhookService';
 import { env } from '../config/env';
 import { notifyBoletoApproved, notifyAffiliateCommission, notifyWithdrawalProcessed } from '../services/push.service';
+import { approveBoletoService } from '../services/approveBoleto';
 
 // Re-exportar funções de manutenção (definidas em maintenanceController para evitar dependência circular)
 export { getMaintenanceStatusPublic, getAdminMaintenance, setMaintenance } from './maintenanceController';
@@ -379,222 +380,38 @@ export const approveBoleto = async (req: Request, res: Response) => {
     const adminId = req.userId;
     const file = (req as any).file as { filename?: string } | undefined;
 
-    // Verificar se é admin
-    const admin = await prisma.user.findUnique({
-      where: { id: adminId }
-    });
-
+    const admin = await prisma.user.findUnique({ where: { id: adminId } });
     if (!admin || admin.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
-    // Buscar boleto
-    const boleto = await prisma.boleto.findUnique({
-      where: { id },
-      include: {
-        user: true,
-        affiliate: true,
-        coupon: true
-      }
-    });
-
-    if (!boleto) {
-      return res.status(404).json({ error: 'Boleto não encontrado' });
-    }
-
-    if (boleto.status !== 'PENDING') {
-      return res.status(400).json({ error: 'Boleto já processado' });
-    }
-
-    // Se veio comprovante, salvar URL
     let receiptUrl: string | undefined;
     if (file) {
       const baseUrl = process.env.APP_URL || 'http://localhost:3001';
       receiptUrl = `${baseUrl}/uploads/boletos/${file.filename}`;
     }
 
-    // Atualizar boleto para PAID
-    const boletoAtualizado = await prisma.boleto.update({
-      where: { id },
-      data: {
-        status: 'PAID',
-        confirmedAt: new Date(),
-        receiptUrl: receiptUrl || boleto.receiptUrl
-      }
+    const result = await approveBoletoService(id, {
+      receiptUrl,
+      adminNotes: req.body?.adminNotes?.trim() || undefined,
     });
 
-    // Atualizar totalPaid do usuário
-    await prisma.user.update({
-      where: { id: boleto.userId },
-      data: {
-        totalPaid: {
-          increment: boleto.totalAmount
-        }
-      }
-    });
-
-    // Se tem afiliado (cupom OU API), criar comissão quando boleto aprovado
-    if (boleto.affiliateId) {
-      // Verificar se já existe transação (idempotência)
-      const existingTransaction = await prisma.affiliateTransaction.findFirst({
-        where: {
-          affiliateId: boleto.affiliateId,
-          boletoId: boleto.id
-        }
-      });
-
-      if (existingTransaction) {
-        // Se já existe e está PENDING, mover para AVAILABLE
-        if (existingTransaction.status === 'PENDING') {
-          await prisma.affiliateTransaction.update({
-            where: { id: existingTransaction.id },
-            data: {
-              status: 'AVAILABLE',
-              availableAt: new Date()
-            }
-          });
-
-          // Mover de pendingBalance para balance
-          await prisma.affiliate.update({
-            where: { id: boleto.affiliateId },
-            data: {
-              pendingBalance: { decrement: existingTransaction.commission },
-              balance: { increment: existingTransaction.commission }
-            }
-          });
-        }
-      } else {
-        // Criar comissão agora que o boleto foi aprovado
-        const commissionAmount = getAffiliateCommissionFromProfit(boleto.fee, boleto.amount);
-
-        if (commissionAmount > 0) {
-          try {
-            // Criar transação como AVAILABLE (já está aprovada)
-            await prisma.affiliateTransaction.create({
-              data: {
-                affiliateId: boleto.affiliateId,
-                boletoId: boleto.id,
-                amount: boleto.totalAmount,
-                commission: commissionAmount,
-                status: 'AVAILABLE',
-                availableAt: new Date()
-              }
-            });
-
-            // Creditar diretamente no balance (já está aprovada)
-            await prisma.affiliate.update({
-              where: { id: boleto.affiliateId },
-              data: {
-                balance: { increment: commissionAmount },
-                totalEarned: { increment: commissionAmount }
-              }
-            });
-
-            const source = (boleto as any).apiKeyId ? 'API' : 'cupom';
-            console.log(`[AFFILIATE] ✅ Comissão de boleto criada após aprovação (${source}): boletoId=${boleto.id}, affiliateId=${boleto.affiliateId}, commission=${commissionAmount}`);
-            // Push para o afiliado (buscar userId da afiliado)
-            const affiliateUser = await prisma.affiliate.findUnique({ where: { id: boleto.affiliateId }, select: { userId: true } });
-            if (affiliateUser) notifyAffiliateCommission(affiliateUser.userId, commissionAmount).catch(() => {});
-          } catch (error) {
-            console.error(`[AFFILIATE] ❌ Erro ao criar comissão para boleto ${boleto.id}:`, error);
-          }
-        }
-      }
-
-      // Incrementar usageCount do cupom apenas quando há cupom associado
-      if (boleto.couponId) {
-        try {
-          await prisma.coupon.update({
-            where: { id: boleto.couponId },
-            data: { usageCount: { increment: 1 } }
-          });
-          console.log(`[AFFILIATE] ✅ usageCount incrementado para cupom ${boleto.couponId} após aprovação do boleto`);
-        } catch (error) {
-          console.error(`[AFFILIATE] ❌ Erro ao incrementar usageCount do cupom ${boleto.couponId}:`, error);
-        }
-      }
+    if (!result.success) {
+      const status = result.error === 'Boleto não encontrado.' ? 404 : 400;
+      return res.status(status).json({ error: result.error });
     }
 
-    // ========================================
-    // COMISSÃO DE INDICAÇÃO (Referral)
-    // ========================================
-    try {
-      const boletoOwner = await prisma.user.findUnique({
-        where: { id: boleto.userId },
-        select: { referredByCode: true }
-      });
-      if (boletoOwner?.referredByCode) {
-        const referrer = await prisma.user.findUnique({
-          where: { referralCode: boletoOwner.referredByCode },
-          select: { id: true }
-        });
-        if (referrer) {
-          // Comissão = 20% da taxa ORIGINAL (sem desconto de referral)
-          const originalTax = calculateTax(boleto.amount, 0);
-          const originalFee = originalTax.isValid ? originalTax.taxAmount : boleto.fee;
-          const referralCommission = Math.floor(originalFee * REFERRAL_RATE * 100) / 100;
-          if (referralCommission > 0) {
-            await prisma.referralEarning.create({
-              data: {
-                earnerId: referrer.id,
-                sourceUserId: boleto.userId,
-                boletoId: boleto.id,
-                feeAmount: originalFee,
-                commission: referralCommission
-              }
-            });
-            console.log(`[REFERRAL] ✅ Comissão R$ ${referralCommission} creditada para ${referrer.id} (boleto ${boleto.id})`);
-            notifyAffiliateCommission(referrer.id, referralCommission).catch(() => {});
-            try {
-              const { notifyUserByTelegram } = require('../services/telegram.service');
-              notifyUserByTelegram(referrer.id, `🎉 Nova comissão de indicação!\n\nVocê ganhou R$ ${referralCommission.toFixed(2)} pela aprovação de um boleto do seu indicado.`).catch(() => {});
-            } catch (_e) {}
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`[REFERRAL] ❌ Erro ao processar comissão de indicação para boleto ${boleto.id}:`, err);
-    }
-
-    // Registrar log
     await prisma.log.create({
       data: {
         action: 'boleto_approved',
-        details: JSON.stringify({
-          boletoId: boleto.id,
-          adminId,
-          amount: boleto.totalAmount
-        }),
+        details: JSON.stringify({ boletoId: id, adminId, amount: result.boleto?.totalAmount }),
         ip: req.ip || 'unknown',
         userAgent: req.get('user-agent') || 'unknown',
-        userId: adminId
-      }
+        userId: adminId,
+      },
     });
 
-    // Notificar usuário no Telegram (se tiver verificado o bot)
-    const valor = boleto.totalAmount.toFixed(2).replace('.', ',');
-    notifyUserByTelegram(boleto.userId, `✅ PagDepix liquidou seu boleto!\nValor: R$ ${valor}\nAcesse o site para ver o comprovante.`).catch(() => {});
-    // Web Push notification
-    notifyBoletoApproved(boleto.userId, boleto.totalAmount, boletoAtualizado.receiptUrl).catch(() => {});
-
-    // Webhook para API White-Label
-    if ((boleto as any).apiKeyId) {
-      dispatchWebhook('payment.approved', boleto.id, 'boleto', {
-        amount: boleto.amount,
-        fee: boleto.fee,
-        totalAmount: boleto.totalAmount,
-        status: 'PAID',
-        confirmedAt: boletoAtualizado.confirmedAt,
-        receiptUrl: boletoAtualizado.receiptUrl,
-        externalRef: (boleto as any).externalRef,
-      }, (boleto as any).apiKeyId, (boleto as any).isSandbox).catch(() => {});
-    }
-
-    return res.status(200).json({
-      message: 'Boleto aprovado com sucesso',
-      boleto: boletoAtualizado
-    });
-
+    return res.status(200).json({ message: 'Boleto aprovado com sucesso', boleto: result.boleto });
   } catch (error) {
     console.error('Erro ao aprovar boleto:', error);
     return res.status(500).json({ error: 'Erro interno ao aprovar boleto' });
@@ -622,34 +439,34 @@ export const payBoletoViaAsaas = async (req: Request, res: Response) => {
     if (!boleto.barcode) return res.status(400).json({ error: 'Boleto sem código de barras — não é possível pagar via Asaas.' });
 
     const { asaasPayBill } = await import('../services/asaas.service');
-    const result = await asaasPayBill(
+    const asaasResult = await asaasPayBill(
       boleto.barcode,
       boleto.amount,
       `PagDepix Boleto #${boleto.id.slice(0, 8)}`
     );
 
-    if (!result.success) return res.status(400).json({ error: result.error });
+    if (!asaasResult.success) return res.status(400).json({ error: asaasResult.error });
 
-    // Approve the boleto in our system
-    const appUrl = (process.env.APP_URL || process.env.BACKEND_URL || 'https://api.pagdepix.com').replace(/\/$/, '');
-    await prisma.boleto.update({
-      where: { id },
-      data: {
-        status: 'PAID',
-        paidAt: new Date(),
-        receiptUrl: result.transactionReceiptUrl || null,
-        adminNotes: `Pago via Asaas${result.id ? ` (ID: ${result.id})` : ''}`,
-      } as any,
+    const approvalResult = await approveBoletoService(id, {
+      paidViaAsaas: true,
+      asaasPaymentId: asaasResult.id ?? undefined,
+      receiptUrl: asaasResult.transactionReceiptUrl ?? undefined,
+      adminNotes: `Pago via Asaas${asaasResult.id ? ` (ID: ${asaasResult.id})` : ''}`,
     });
+
+    if (!approvalResult.success) {
+      console.warn(`[payBoletoViaAsaas] Asaas paid but approval failed: ${approvalResult.error}`);
+      return res.status(409).json({ error: approvalResult.error });
+    }
 
     const { notifyAdmin } = await import('../services/telegram.service');
     notifyAdmin(
       `✅ *Boleto pago via Asaas* #${boleto.id.slice(0, 8)}\n` +
       `💰 R$ ${boleto.amount.toFixed(2)} · ${boleto.user?.name}\n` +
-      `Asaas ID: ${result.id ?? 'N/A'}`
+      `Asaas ID: ${asaasResult.id ?? 'N/A'}`
     ).catch(() => {});
 
-    return res.json({ success: true, receiptUrl: result.transactionReceiptUrl });
+    return res.json({ success: true, receiptUrl: asaasResult.transactionReceiptUrl });
   } catch (error) {
     console.error('Erro ao pagar boleto via Asaas:', error);
     return res.status(500).json({ error: 'Erro interno' });

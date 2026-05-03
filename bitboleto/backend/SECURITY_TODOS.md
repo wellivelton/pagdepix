@@ -29,6 +29,7 @@
 - Solução: passar req.ip do controller até as funções de criação/aprovação,
   armazenar em PixCopiaCola.userIp e MobileRecharge.userIp como novos campos
   (mudança de schema em ambos os modelos)
+- Nota: createBoleto.ts JÁ captura req.ip corretamente (req?.ip) — Boleto não afetado
 - Ação: Bloco 6 (médios) ou bloco dedicado a antifraud
 
 ## webhook GeraDePix sem rate limit
@@ -36,3 +37,19 @@
 - Risco: DoS por flood de webhooks falsos sem custo para o atacante
 - Ação: aplicar rate limit específico para rotas /webhook/* num bloco futuro
   de hardening (separado do rate limit geral de usuários)
+
+## Sistema de referral earnings é apenas log — saldo do indicador nunca é creditado
+
+- Arquivos: pixCopiaCola.ts, mobileRecharge.ts, approveBoleto.ts
+- Comportamento atual: ReferralEarning.create registra a comissão devida
+  ao indicador, mas nenhum lugar do código incrementa um saldo do User
+  (campo "balance" sequer existe no model User).
+- Consequência: o sistema rastreia quanto cada indicador "deveria"
+  receber, mas o indicador nunca recebe de fato — não há saldo a sacar.
+- Ação: bloco futuro precisa decidir entre:
+  (a) adicionar campo User.balance + creditar inline em todos os fluxos
+      de aprovação (PCC, mobile, boleto, batch)
+  (b) criar job que processa ReferralEarning periodicamente e credita
+      o indicador via outro mecanismo (ex: PIX direto)
+  (c) remover o sistema de referral se ele não está sendo usado
+- Decisão arquitetural pendente. Bloco não atribuído ainda.

@@ -480,7 +480,11 @@ model Boleto {
   rateLockExpiresAt DateTime?
   rateExpired       Boolean         @default(false)
 
-  liquidAddressIndex Int?
+  liquidAddressIndex Int? @unique
+
+  adminNotes     String?
+  paidViaAsaas   Boolean @default(false)
+  asaasPaymentId String?
 
   apiKeyId    String?
   externalRef String?
