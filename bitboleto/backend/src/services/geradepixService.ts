@@ -95,6 +95,7 @@ export async function createWithdrawal(params: CreateWithdrawalParams): Promise<
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
   });
 
   const data = (await res.json()) as { success?: boolean; withdrawal?: CreateWithdrawalResult['withdrawal']; error?: string };
@@ -132,6 +133,7 @@ export async function getWithdrawalStatus(withdrawalId: string): Promise<GetWith
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
+      signal: AbortSignal.timeout(10_000),
     }
   );
 
@@ -184,6 +186,7 @@ export async function refreshWithdrawalReceipt(withdrawalId: string): Promise<Re
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ withdrawal_id: withdrawalId }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   const data = (await res.json()) as { success?: boolean; withdrawal?: RefreshWithdrawalResult['withdrawal']; error?: string };

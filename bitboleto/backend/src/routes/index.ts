@@ -129,7 +129,8 @@ import {
   registerRateLimiter,
   passwordResetRateLimiter,
   boletoCreateRateLimiter,
-  sendEmailCodeRateLimiter
+  sendEmailCodeRateLimiter,
+  webhookRateLimiter,
 } from '../middlewares/rateLimiter';
 import { bruteForceProtection } from '../middlewares/bruteForceProtection';
 import { deviceFingerprintMiddleware } from '../utils/deviceFingerprint';
@@ -333,7 +334,7 @@ router.post('/auth/register/validate-phone', validateRegisterPhone);
 // Autenticação (com rate limiting e brute force protection)
 router.post('/auth/register', deviceFingerprintMiddleware, registerRateLimiter, register);
 router.post('/auth/login', deviceFingerprintMiddleware, loginRateLimiter, bruteForceProtection, login);
-router.post('/auth/forgot-password', passwordResetRateLimiter, requestPasswordReset);
+router.post('/auth/forgot-password', passwordResetRateLimiter, bruteForceProtection, requestPasswordReset);
 if (typeof registerCommerce === 'function') {
   router.post('/commerce/register', deviceFingerprintMiddleware, registerRateLimiter, registerCommerce);
 }
@@ -360,13 +361,13 @@ if (typeof generatePixForPage === 'function') {
 
 // Recuperação de senha (públicas)
 router.get('/auth/validate-reset-token', validateResetToken);
-router.post('/auth/reset-password', passwordResetRateLimiter, resetPassword);
+router.post('/auth/reset-password', passwordResetRateLimiter, bruteForceProtection, resetPassword);
 
 // Webhook do Telegram (público; chamado pelo Telegram)
-router.post('/webhook/telegram', telegramWebhook);
+router.post('/webhook/telegram', webhookRateLimiter, telegramWebhook);
 
 // Webhook GeraDePix (público; chamado pela API GeraDePix - saques Depix→Pix)
-router.post('/webhook/geradepix', geradepixWebhook);
+router.post('/webhook/geradepix', webhookRateLimiter, geradepixWebhook);
 
 // Status do modo manutenção (público - para frontend exibir tela de manutenção)
 router.get('/maintenance/status', getMaintenanceStatusPublic);
@@ -1463,7 +1464,7 @@ router.post('/admin/pix-copia-cola/:id/pay-asaas', ...protectedAdminRoute, async
 });
 
 // Webhook Velora: atualização de status de pagamento de saída
-router.post('/webhook/velora', async (req: any, res) => {
+router.post('/webhook/velora', webhookRateLimiter, async (req: any, res) => {
   const secret = process.env.VELORA_WEBHOOK_SECRET;
 
   // Secret is mandatory — never accept unsigned webhooks in production.

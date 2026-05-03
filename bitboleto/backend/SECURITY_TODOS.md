@@ -38,6 +38,12 @@
 - Ação: aplicar rate limit específico para rotas /webhook/* num bloco futuro
   de hardening (separado do rate limit geral de usuários)
 
+## Rate limit store in-memory — limites resetam no restart do servidor
+
+- Sem impacto em single-node, mas requer Redis se escalar horizontalmente.
+- Solução: trocar store padrão por `rate-limit-redis` + instância Redis compartilhada.
+- Ação: avaliar quando/se houver deploy multi-instância.
+
 ## Refresh token não implementado — usuário precisa fazer login após 8h
 
 - Todos os jwt.sign foram unificados para expiresIn: '8h' no Bloco 4

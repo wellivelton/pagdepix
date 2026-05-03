@@ -85,3 +85,12 @@ export const marketplaceActionRateLimiter = rateLimit({
   legacyHeaders: false,
   skip: isWhitelisted,
 });
+
+export const webhookRateLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests.' },
+  skip: isWhitelisted,
+});
