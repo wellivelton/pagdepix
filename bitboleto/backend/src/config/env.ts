@@ -9,6 +9,7 @@ export interface Env {
 
   // Optional — features degrade gracefully when absent
   TELEGRAM_BOT_TOKEN: string | undefined;
+  TELEGRAM_WEBHOOK_SECRET: string | undefined;
   ASAAS_API_KEY: string | undefined;
   RESEND_API_KEY: string | undefined;
   VAPID_PUBLIC_KEY: string | undefined;
@@ -122,6 +123,7 @@ export function validateEnv(source: Record<string, string | undefined> = process
 
   const optional = {
     TELEGRAM_BOT_TOKEN:     opt('TELEGRAM_BOT_TOKEN'),
+    TELEGRAM_WEBHOOK_SECRET: opt('TELEGRAM_WEBHOOK_SECRET'),
     ASAAS_API_KEY:          opt('ASAAS_API_KEY'),
     RESEND_API_KEY:         opt('RESEND_API_KEY'),
     VAPID_PUBLIC_KEY:       opt('VAPID_PUBLIC_KEY'),
@@ -148,6 +150,7 @@ export function validateEnv(source: Record<string, string | undefined> = process
 function logFeatureStatus(optional: Record<string, string | undefined>): void {
   const features = [
     { name: 'TELEGRAM_BOT',         enabled: !!optional['TELEGRAM_BOT_TOKEN'],                                           reason: 'TELEGRAM_BOT_TOKEN missing' },
+    { name: 'TELEGRAM_WEBHOOK_AUTH', enabled: !!optional['TELEGRAM_WEBHOOK_SECRET'],                                      reason: 'TELEGRAM_WEBHOOK_SECRET missing — webhook accepts any request' },
     { name: 'PUSH_NOTIFICATIONS',   enabled: !!(optional['VAPID_PUBLIC_KEY'] && optional['VAPID_PRIVATE_KEY']),           reason: 'VAPID_PUBLIC_KEY/PRIVATE_KEY missing' },
     { name: 'SWAP (SwapVerse)',      enabled: !!optional['SWAPVERSE_ACCESS_TOKEN'],                                        reason: 'SWAPVERSE_ACCESS_TOKEN missing' },
     { name: 'EMAIL (Resend)',        enabled: !!optional['RESEND_API_KEY'],                                                reason: 'RESEND_API_KEY missing' },

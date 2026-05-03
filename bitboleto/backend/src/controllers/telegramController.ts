@@ -37,7 +37,7 @@ const MSG_DEFAULT =
  */
 function validateTelegramWebhook(req: Request): boolean {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (!secret) return true;
+  if (!secret) return false;
   const token = req.headers['x-telegram-bot-api-secret-token'];
   return typeof token === 'string' && token === secret;
 }
