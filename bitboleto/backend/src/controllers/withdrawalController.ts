@@ -57,29 +57,15 @@ export const requestWithdrawal = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar se já existe saque pendente
-    const pendingWithdrawal = await prisma.withdrawal.findFirst({
-      where: {
-        affiliateId: affiliate.id,
-        status: 'PENDING'
-      }
-    });
-
-    if (pendingWithdrawal) {
-      return res.status(400).json({ 
-        error: 'Você já possui um saque pendente. Aguarde a aprovação.' 
-      });
-    }
-
     // Verificar se carteira foi alterada nas últimas 24h
     if (affiliate.lastWalletChange) {
-      const hoursSinceChange = 
+      const hoursSinceChange =
         (Date.now() - affiliate.lastWalletChange.getTime()) / (1000 * 60 * 60);
-      
+
       if (hoursSinceChange < 24) {
         const hoursRemaining = Math.ceil(24 - hoursSinceChange);
-        return res.status(400).json({ 
-          error: `Carteira alterada recentemente. Aguarde ${hoursRemaining} hora(s) antes de solicitar saque.` 
+        return res.status(400).json({
+          error: `Carteira alterada recentemente. Aguarde ${hoursRemaining} hora(s) antes de solicitar saque.`
         });
       }
     }
@@ -95,16 +81,30 @@ export const requestWithdrawal = async (req: Request, res: Response) => {
       });
     }
 
-    // Criar solicitação de saque
-    const withdrawal = await prisma.withdrawal.create({
-      data: {
-        affiliateId: affiliate.id,
-        userId: user.id,
-        amount,
-        liquidWallet,
-        status: 'PENDING'
+    // Criar solicitação de saque (check + create atômico — evita dois PENDING simultâneos)
+    let withdrawal: any;
+    try {
+      withdrawal = await prisma.$transaction(async (tx) => {
+        const existing = await tx.withdrawal.findFirst({
+          where: { affiliateId: affiliate.id, status: 'PENDING' },
+        });
+        if (existing) throw new Error('PENDING_EXISTS');
+        return tx.withdrawal.create({
+          data: {
+            affiliateId: affiliate.id,
+            userId: user.id,
+            amount,
+            liquidWallet,
+            status: 'PENDING',
+          },
+        });
+      }, { isolationLevel: 'Serializable', timeout: 10000 });
+    } catch (err: any) {
+      if (err.message === 'PENDING_EXISTS') {
+        return res.status(400).json({ error: 'Você já possui um saque pendente. Aguarde a aprovação.' });
       }
-    });
+      throw err;
+    }
 
     // Registrar log
     await prisma.log.create({
@@ -254,48 +254,58 @@ export const processWithdrawal = async (req: Request, res: Response) => {
     }
 
     if (action === 'approve') {
-      // Verificar se ainda tem saldo suficiente
-      const affiliate = await prisma.affiliate.findUnique({ where: { id: withdrawal.affiliateId } });
-      if (!affiliate || withdrawal.amount > affiliate.balance) {
-        return res.status(400).json({ error: 'Saldo insuficiente' });
+      let approvedWithdrawal: any;
+      try {
+        approvedWithdrawal = await prisma.$transaction(async (tx) => {
+          const claimed = await tx.withdrawal.updateMany({
+            where: { id, status: 'PENDING' },
+            data: {
+              status: 'APPROVED',
+              adminNotes: adminNotes ?? null,
+              processedAt: new Date(),
+            },
+          });
+          if (claimed.count === 0) throw new Error('ALREADY_PROCESSED');
+
+          const affiliate = await tx.affiliate.findUnique({ where: { id: withdrawal.affiliateId } });
+          if (!affiliate || withdrawal.amount > affiliate.balance) {
+            throw new Error('INSUFFICIENT_BALANCE');
+          }
+
+          await tx.affiliate.update({
+            where: { id: withdrawal.affiliateId },
+            data: { balance: { decrement: withdrawal.amount } },
+          });
+
+          return tx.withdrawal.findUnique({ where: { id } });
+        }, { isolationLevel: 'Serializable', timeout: 10000 });
+      } catch (err: any) {
+        if (err.message === 'ALREADY_PROCESSED') {
+          return res.status(400).json({ error: 'Saque já processado.' });
+        }
+        if (err.message === 'INSUFFICIENT_BALANCE') {
+          return res.status(400).json({ error: 'Saldo insuficiente.' });
+        }
+        throw err;
       }
 
-      // Atualizar saque para APPROVED
-      await prisma.withdrawal.update({
-        where: { id },
-        data: {
-          status: 'APPROVED',
-          adminNotes,
-          processedAt: new Date()
-        }
-      });
-
-      // Debitar do saldo do afiliado
-      await prisma.affiliate.update({
-        where: { id: withdrawal.affiliateId },
-        data: {
-          balance: { decrement: withdrawal.amount }
-        }
-      });
-
-      // Registrar log
       await prisma.log.create({
         data: {
           action: 'withdrawal_approved',
           details: JSON.stringify({
             withdrawalId: withdrawal.id,
             amount: withdrawal.amount,
-            liquidWallet: withdrawal.liquidWallet
+            liquidWallet: withdrawal.liquidWallet,
           }),
           ip: req.ip || 'unknown',
           userAgent: req.get('user-agent') || 'unknown',
-          userId: adminId
-        }
+          userId: adminId,
+        },
       });
 
       return res.status(200).json({
         message: 'Saque aprovado com sucesso',
-        withdrawal: await prisma.withdrawal.findUnique({ where: { id } })
+        withdrawal: approvedWithdrawal,
       });
 
     } else if (action === 'reject') {
