@@ -10,7 +10,6 @@ import {
 import {
   isUserVerified,
   validateCouponUsage,
-  logCouponUsage,
   calculateEstimatedProfit,
 } from '../utils/antifraud';
 import { getRates, convertBrlToUsdt, convertBrlToSats } from './exchangeRate';
@@ -40,7 +39,7 @@ export interface CreateBoletoBatchResult {
   error?: string;
 }
 
-// ─── wallet config (shared with createBoleto) ────────────────────────────────
+// ─── wallet config ────────────────────────────────────────────────────────────
 
 interface WalletConfig {
   walletAddress: string;
@@ -146,7 +145,6 @@ export const createBoletoBatch = async (
     if (cupom.maxUsage !== null && cupom.usageCount >= cupom.maxUsage)
       return { success: false, error: 'Cupom esgotado.' };
 
-    // Validação antifraude usando o primeiro item como referência
     const couponValidation = await validateCouponUsage(
       couponCode, userId, user.email, user.telegram, userIp, deviceFingerprint, items[0].amount,
     );
@@ -158,11 +156,9 @@ export const createBoletoBatch = async (
     descontoAplicado = Math.min(cupom.discount, maxDiscount);
     affiliateId = cupom.affiliateId;
   } else {
-    // Desconto de indicação (referral) — automático
     const userReferral = await prisma.user.findUnique({ where: { id: userId }, select: { referredByCode: true } });
     if (userReferral?.referredByCode) {
       isReferralDiscount = true;
-      // Desconto de 20% será aplicado diretamente sobre cada taxa (sem passar pelo cap do cupom)
     }
   }
 
@@ -188,7 +184,6 @@ export const createBoletoBatch = async (
     if (!taxCalc.isValid)
       return { success: false, error: `Boleto ${i + 1}: valor inválido para cálculo de taxa.` };
 
-    // Referral: aplica 20% de desconto diretamente sobre a taxa (sem cap do cupom)
     let fee = taxCalc.taxAmount;
     let totalAmount: number = taxCalc.totalAmountExact ?? taxCalc.totalAmount;
 
@@ -210,7 +205,7 @@ export const createBoletoBatch = async (
 
   const grandTotal = grandTotalBoletos + grandTotalFee;
 
-  // ── 5. Conversão multi-moeda (sobre o total combinado) ──────────────────
+  // ── 5. Conversão multi-moeda ─────────────────────────────────────────────
 
   let exchangeRate: number | null = null;
   let cryptoAmount: string | null = null;
@@ -229,15 +224,16 @@ export const createBoletoBatch = async (
     rateLockExpiresAt = new Date(Date.now() + walletConfig.rateLockMinutes * 60_000);
   }
 
-  let wallet: { walletAddress: string; qrCodeUrl: string };
+  // ── 6. Criar batch + boletos (Serializable tx + P2002 retry) ────────────
+
+  let wallet: { walletAddress: string; qrCodeUrl: string } = { walletAddress: '', qrCodeUrl: '' };
   let batchLiquidAddressIndex: number | null = null;
 
+  // Initial wallet/index setup
   if (isXpubConfigured()) {
     try {
-      const xpub = process.env.LIQUID_XPUB!;
-      const mbk = process.env.LIQUID_MASTER_BLINDING_KEY!;
       batchLiquidAddressIndex = await getNextAddressIndex(prisma);
-      const hdAddress = deriveLiquidAddress(xpub, mbk, batchLiquidAddressIndex);
+      const hdAddress = deriveLiquidAddress(env.LIQUID_XPUB, env.LIQUID_MASTER_BLINDING_KEY, batchLiquidAddressIndex);
       wallet = { walletAddress: hdAddress, qrCodeUrl: '' };
     } catch (err: any) {
       console.error('[createBoletoBatch] HD derivation failed, falling back to static wallet:', err);
@@ -254,74 +250,129 @@ export const createBoletoBatch = async (
     }
   }
 
-  // ── 6. Criar o batch e cada boleto numa transação ───────────────────────
+  const MAX_INDEX_RETRIES = 3;
+  let batchResult: { batch: any; boletos: any[] } | undefined;
 
-  const batchAndBoletos = await prisma.$transaction(async (tx) => {
-    // 6a. Criar o BoletoBatch
-    const batch = await (tx as any).boletoBatch.create({
-      data: {
-        userId,
-        itemCount: items.length,
-        totalBoletos: grandTotalBoletos,
-        totalFee: grandTotalFee,
-        grandTotal,
-        walletAddress: wallet.walletAddress,
-        qrCode: wallet.qrCodeUrl,
-        liquidAddressIndex: batchLiquidAddressIndex,
-        paymentCurrency: currency,
-        cryptoAmount,
-        depixAmount: grandTotal,
-        exchangeRate,
-        rateLockExpiresAt,
-        couponCode: couponCode?.toUpperCase() || null,
-        status: 'PENDING',
-      },
-    });
+  for (let attempt = 0; attempt <= MAX_INDEX_RETRIES; attempt++) {
+    try {
+      batchResult = await prisma.$transaction(async (tx) => {
+        // P4: FOR UPDATE on coupon — prevent exhaustion race
+        if (cupom) {
+          const rows: any[] = await tx.$queryRaw`
+            SELECT id, "usageCount", "maxUsage", "isActive"
+            FROM "Coupon"
+            WHERE id = ${cupom.id}
+            FOR UPDATE
+          `;
+          const locked = rows[0];
+          if (!locked?.isActive) throw new Error('COUPON_INACTIVE');
+          if (locked.maxUsage != null && locked.usageCount >= locked.maxUsage) {
+            throw new Error('COUPON_EXHAUSTED');
+          }
+          // P5: increment usageCount inside tx
+          await tx.coupon.update({
+            where: { id: cupom.id },
+            data: { usageCount: { increment: 1 } },
+          });
+        }
 
-    // 6b. Criar cada boleto vinculado ao batch
-    const boletosCreated = [];
-    for (const calc of calcs) {
-      const b = await tx.boleto.create({
-        data: {
-          userId,
-          batchId: batch.id,
-          barcode: calc.item.barcode || null,
-          pdfUrl: calc.item.pdfUrl || null,
-          pdfPassword: calc.item.pdfPassword || null,
-          amount: calc.amount,
-          fee: calc.fee,
-          totalAmount: calc.totalAmount,
-          dueDate: new Date(calc.item.dueDate),
-          depixAmount: calc.totalAmount,
-          walletAddress: wallet.walletAddress, // mesma carteira do batch
-          qrCode: wallet.qrCodeUrl,
-          status: 'PENDING',
-          couponUsed: couponCode?.toUpperCase() || null,
-          couponId: cupom?.id || null,
-          affiliateId: affiliateId || null,
-          paymentCurrency: currency,
-          exchangeRate,
-          cryptoAmount: null, // cada boleto não tem seu próprio crypto amount; usa o do batch
-          rateLockExpiresAt,
-        },
-      });
-      boletosCreated.push(b);
+        // 6a. Create the BoletoBatch
+        const batch = await (tx as any).boletoBatch.create({
+          data: {
+            userId,
+            itemCount: items.length,
+            totalBoletos: grandTotalBoletos,
+            totalFee: grandTotalFee,
+            grandTotal,
+            walletAddress: wallet.walletAddress,
+            qrCode: wallet.qrCodeUrl,
+            liquidAddressIndex: batchLiquidAddressIndex,
+            paymentCurrency: currency,
+            cryptoAmount,
+            depixAmount: grandTotal,
+            exchangeRate,
+            rateLockExpiresAt,
+            couponCode: couponCode?.toUpperCase() || null,
+            status: 'PENDING',
+          },
+        });
+
+        // 6b. Create each boleto linked to the batch
+        const boletosCreated: any[] = [];
+        for (const calc of calcs) {
+          const b = await tx.boleto.create({
+            data: {
+              userId,
+              batchId: batch.id,
+              barcode: calc.item.barcode || null,
+              pdfUrl: calc.item.pdfUrl || null,
+              pdfPassword: calc.item.pdfPassword || null,
+              amount: calc.amount,
+              fee: calc.fee,
+              totalAmount: calc.totalAmount,
+              dueDate: new Date(calc.item.dueDate),
+              depixAmount: calc.totalAmount,
+              walletAddress: wallet.walletAddress,
+              qrCode: wallet.qrCodeUrl,
+              status: 'PENDING',
+              couponUsed: couponCode?.toUpperCase() || null,
+              couponId: cupom?.id || null,
+              affiliateId: affiliateId || null,
+              paymentCurrency: currency,
+              exchangeRate,
+              cryptoAmount: null,
+              rateLockExpiresAt,
+            },
+          });
+          boletosCreated.push(b);
+        }
+
+        // P6: CouponUsage inside tx — boletoId = first boleto in batch
+        if (cupom && couponCode) {
+          await tx.couponUsage.create({
+            data: {
+              couponId: cupom.id,
+              userId,
+              userEmail: user.email.toLowerCase(),
+              userTelegram: (user.telegram ?? '').toLowerCase(),
+              userIp,
+              deviceFingerprint: deviceFingerprint || null,
+              boletoId: boletosCreated[0].id,
+            },
+          });
+        }
+
+        return { batch, boletos: boletosCreated };
+      }, { isolationLevel: 'Serializable', timeout: 10000 }); // P1
+
+      break; // success — exit retry loop
+    } catch (err: any) {
+      if (err?.message === 'COUPON_EXHAUSTED') return { success: false, error: 'Cupom esgotado.' };
+      if (err?.message === 'COUPON_INACTIVE') return { success: false, error: 'Cupom inativo.' };
+      if (err?.code === 'P2002' && batchLiquidAddressIndex !== null && attempt < MAX_INDEX_RETRIES) {
+        try {
+          batchLiquidAddressIndex = await getNextAddressIndex(prisma);
+          const newAddr = deriveLiquidAddress(env.LIQUID_XPUB, env.LIQUID_MASTER_BLINDING_KEY, batchLiquidAddressIndex);
+          wallet = { walletAddress: newAddr, qrCodeUrl: '' };
+        } catch (_hdErr) {
+          batchLiquidAddressIndex = null;
+          try {
+            wallet = pickWallet(walletConfig, currency);
+          } catch (wErr: any) {
+            return { success: false, error: wErr.message };
+          }
+        }
+        continue;
+      }
+      throw err;
     }
-
-    return { batch, boletos: boletosCreated };
-  });
-
-  const { batch, boletos } = batchAndBoletos;
-
-  // ── 7. Registrar uso do cupom (uma vez por batch, não por boleto) ────────
-
-  if (cupom && couponCode) {
-    await logCouponUsage(
-      cupom.id, userId, user.email, user.telegram, userIp, deviceFingerprint, boletos[0].id,
-    );
   }
 
-  // ── 8. Log ───────────────────────────────────────────────────────────────
+  if (!batchResult) throw new Error('[createBoletoBatch] Unexpected: no result after retry loop');
+
+  const { batch, boletos } = batchResult;
+
+  // ── 7. Log ───────────────────────────────────────────────────────────────
 
   await prisma.log.create({
     data: {
@@ -340,7 +391,7 @@ export const createBoletoBatch = async (
     },
   });
 
-  // ── 9. Retornar ──────────────────────────────────────────────────────────
+  // ── 8. Retornar ──────────────────────────────────────────────────────────
 
   return {
     success: true,
