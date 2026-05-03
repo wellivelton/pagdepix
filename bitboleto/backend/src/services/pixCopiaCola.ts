@@ -647,6 +647,10 @@ export async function adminProcessPixCopiaCola(
               commission: referralCommission,
             },
           });
+          await tx.user.update({
+            where: { id: referrer.id },
+            data: { referralBalance: { increment: referralCommission } },
+          });
           referralNotification = { earnerId: referrer.id, commission: referralCommission };
         }
       }
@@ -680,28 +684,30 @@ export async function adminProcessPixCopiaCola(
         }
       }
 
-      // Bug B fix: usageCount increment is outside affiliateId block — coupon usage
-      // is independent of whether an affiliate was involved.
-      if (record.cupomId) {
-        await tx.coupon.update({
-          where: { id: record.cupomId },
-          data: { usageCount: { increment: 1 } },
-        });
-      }
+      if (action === 'APPROVED') {
+        // Bug B fix: usageCount increment is outside affiliateId block — coupon usage
+        // is independent of whether an affiliate was involved.
+        if (record.cupomId) {
+          await tx.coupon.update({
+            where: { id: record.cupomId },
+            data: { usageCount: { increment: 1 } },
+          });
+        }
 
-      // Bug A fix: CouponUsage was never created for PCC orders — per-user daily
-      // limit enforcement in validateCouponUsage was therefore inoperative for PCC.
-      if (record.cupomId) {
-        await tx.couponUsage.create({
-          data: {
-            couponId: record.cupomId,
-            userId: record.userId,
-            userEmail: record.user?.email ?? '',
-            userTelegram: record.user?.telegram ?? '',
-            userIp: record.userIp ?? '',
-            pixCopiaColaId: record.id,
-          },
-        });
+        // Bug A fix: CouponUsage was never created for PCC orders — per-user daily
+        // limit enforcement in validateCouponUsage was therefore inoperative for PCC.
+        if (record.cupomId) {
+          await tx.couponUsage.create({
+            data: {
+              couponId: record.cupomId,
+              userId: record.userId,
+              userEmail: record.user?.email ?? '',
+              userTelegram: record.user?.telegram ?? '',
+              userIp: record.userIp ?? '',
+              pixCopiaColaId: record.id,
+            },
+          });
+        }
       }
     }, { isolationLevel: 'Serializable', timeout: 10000 });
   } catch (err: any) {

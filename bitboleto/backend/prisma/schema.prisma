@@ -134,6 +134,7 @@ model User {
   dailyLimit        Float     @default(500)
   maxBoletoAmount   Float?    // null = padrão R$ 1.000; admin pode liberar valor maior por usuário
   totalPaid         Float     @default(0)
+  referralBalance   Float     @default(0)
   lastLoginAt       DateTime?
   lastLoginIp       String?
   lastLoginCity     String?

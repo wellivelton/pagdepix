@@ -78,6 +78,10 @@ export async function approveBoletoService(
                 commission: referralCommission,
               },
             });
+            await tx.user.update({
+              where: { id: referrer.id },
+              data: { referralBalance: { increment: referralCommission } },
+            });
             referralNotification = { earnerId: referrer.id, commission: referralCommission };
           }
         }
