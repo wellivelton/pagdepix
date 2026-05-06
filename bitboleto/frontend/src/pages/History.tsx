@@ -16,7 +16,10 @@ import {
   Send,
   RefreshCw,
   QrCode,
-  Copy
+  Copy,
+  ArrowRightLeft,
+  Gift,
+  Tv2,
 } from 'lucide-react';
 import api from '../services/api';
 
@@ -86,14 +89,74 @@ interface PixCopiaCola {
   processedAt?: string | null;
 }
 
+interface SideswapSwap {
+  id: string;
+  status: string;
+  depositAsset: string;
+  settleAsset: string;
+  depositAmount: string | null;
+  settleAmount: string | null;
+  depositAddress: string | null;
+  depositTxid: string | null;
+  settleTxid: string | null;
+  errorMessage: string | null;
+  refundAddress: string | null;
+  refundRequestAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PinTopup {
+  id: string;
+  productName: string;
+  brand: string;
+  amount: number;
+  fee: number;
+  totalAmount: number;
+  status: string;
+  pinCode?: string | null;
+  pinMessage?: string | null;
+  authorizationCode?: string | null;
+  serialNumber?: string | null;
+  txid?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+}
+
+interface TvTopup {
+  id: string;
+  productName: string;
+  provider: string;
+  amount: number;
+  fee: number;
+  totalAmount: number;
+  status: string;
+  authorizationCode?: string | null;
+  serialNumber?: string | null;
+  txid?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+}
+
+interface RefundState {
+  addr: string;
+  loading: boolean;
+  sent: boolean;
+  error: string;
+}
+
 export default function History() {
   const [boletos, setBoletos] = useState<Boleto[]>([]);
   const [recharges, setRecharges] = useState<Recharge[]>([]);
   const [sendPixOrders, setSendPixOrders] = useState<SendPixOrder[]>([]);
   const [pixCopiaCola, setPixCopiaCola] = useState<PixCopiaCola[]>([]);
+  const [sideswapSwaps, setSideswapSwaps] = useState<SideswapSwap[]>([]);
+  const [pinTopups, setPinTopups] = useState<PinTopup[]>([]);
+  const [tvTopups, setTvTopups] = useState<TvTopup[]>([]);
+  const [refundStates, setRefundStates] = useState<Record<string, RefundState>>({});
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'boletos' | 'recargas' | 'envios' | 'pix'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'boletos' | 'recargas' | 'envios' | 'pix' | 'swaps' | 'gift'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [editingBoleto, setEditingBoleto] = useState<Boleto | null>(null);
@@ -144,22 +207,34 @@ export default function History() {
 
   useEffect(() => {
     let done = 0;
-    const checkDone = () => { done++; if (done === 4) setLoading(false); };
+    const checkDone = () => { done++; if (done === 7) setLoading(false); };
     api.get('/boleto/list')
       .then(({ data }) => setBoletos(data.boletos))
-      .catch((err) => console.error('Erro ao carregar boletos:', err))
+      .catch(() => {})
       .finally(checkDone);
     api.get('/recharge/list')
       .then(({ data }) => setRecharges(data.recharges ?? []))
-      .catch((err) => console.error('Erro ao carregar recargas:', err))
+      .catch(() => {})
       .finally(checkDone);
     api.get('/depix/send-pix', { params: { limit: 100 } })
       .then(({ data }) => setSendPixOrders(data.orders ?? []))
-      .catch((err) => console.error('Erro ao carregar envios Pix:', err))
+      .catch(() => {})
       .finally(checkDone);
     api.get('/pix-copia-cola', { params: { limit: 100 } })
       .then(({ data }) => setPixCopiaCola(data.items ?? []))
-      .catch((err) => console.error('Erro ao carregar Pix Copia e Cola:', err))
+      .catch(() => {})
+      .finally(checkDone);
+    api.get('/sideswap/swaps')
+      .then(({ data }) => setSideswapSwaps(data.swaps ?? []))
+      .catch(() => {})
+      .finally(checkDone);
+    api.get('/pin/list', { params: { limit: 100 } })
+      .then(({ data }) => setPinTopups(data.pinTopups ?? []))
+      .catch(() => {})
+      .finally(checkDone);
+    api.get('/tv/list', { params: { limit: 100 } })
+      .then(({ data }) => setTvTopups(data.tvTopups ?? []))
+      .catch(() => {})
       .finally(checkDone);
   }, []);
 
@@ -222,6 +297,22 @@ export default function History() {
       setEditLoading(false);
     }
   };
+
+  const handleRefundSubmit = async (swapId: string) => {
+    const state = refundStates[swapId];
+    if (!state?.addr.trim()) return;
+    setRefundStates(prev => ({ ...prev, [swapId]: { ...prev[swapId], loading: true, error: '' } }));
+    try {
+      await api.post(`/sideswap/refund/${swapId}`, { refundAddress: state.addr.trim() });
+      setRefundStates(prev => ({ ...prev, [swapId]: { ...prev[swapId], loading: false, sent: true } }));
+      setSideswapSwaps(prev => prev.map(s => s.id === swapId ? { ...s, refundAddress: state.addr.trim() } : s));
+    } catch (e: any) {
+      setRefundStates(prev => ({ ...prev, [swapId]: { ...prev[swapId], loading: false, error: e?.response?.data?.error || 'Erro ao enviar solicitação.' } }));
+    }
+  };
+
+  const getRefundState = (swapId: string): RefundState =>
+    refundStates[swapId] ?? { addr: '', loading: false, sent: false, error: '' };
 
   const formatPhone = (phone: string) => {
     const d = (phone || '').replace(/\D/g, '').replace(/^55/, '');
@@ -349,12 +440,36 @@ export default function History() {
     return true;
   });
 
-  type HistoryItem = { type: 'boleto'; item: Boleto } | { type: 'recharge'; item: Recharge } | { type: 'sendpix'; item: SendPixOrder } | { type: 'pix'; item: PixCopiaCola };
+  const filteredSideswapSwaps = sideswapSwaps.filter(sw => {
+    if (filter !== 'ALL') {
+      const mappedStatus = filter === 'PAID' ? 'completed' : filter === 'PROBLEM' ? 'failed' : filter.toLowerCase();
+      if (sw.status !== mappedStatus) return false;
+    }
+    if (search && !sw.depositTxid?.includes(search) && !sw.settleTxid?.includes(search) && !sw.id.includes(search)) return false;
+    return true;
+  });
+
+  const filteredPinTopups = pinTopups.filter(p => {
+    if (filter !== 'ALL' && p.status !== filter) return false;
+    if (search && !p.productName?.toLowerCase().includes(search.toLowerCase()) && !p.brand?.toLowerCase().includes(search.toLowerCase()) && !p.pinCode?.includes(search) && !p.txid?.includes(search)) return false;
+    return true;
+  });
+
+  const filteredTvTopups = tvTopups.filter(t => {
+    if (filter !== 'ALL' && t.status !== filter) return false;
+    if (search && !t.productName?.toLowerCase().includes(search.toLowerCase()) && !t.provider?.toLowerCase().includes(search.toLowerCase()) && !t.authorizationCode?.includes(search) && !t.txid?.includes(search)) return false;
+    return true;
+  });
+
+  type HistoryItem = { type: 'boleto'; item: Boleto } | { type: 'recharge'; item: Recharge } | { type: 'sendpix'; item: SendPixOrder } | { type: 'pix'; item: PixCopiaCola } | { type: 'swap'; item: SideswapSwap } | { type: 'pin_topup'; item: PinTopup } | { type: 'tv_topup'; item: TvTopup };
   const mergedItems: HistoryItem[] = [
     ...filteredBoletos.map((item): HistoryItem => ({ type: 'boleto', item })),
     ...filteredRecharges.map((item): HistoryItem => ({ type: 'recharge', item })),
     ...filteredSendPix.map((item): HistoryItem => ({ type: 'sendpix', item })),
     ...filteredPixCopiaCola.map((item): HistoryItem => ({ type: 'pix', item })),
+    ...filteredSideswapSwaps.map((item): HistoryItem => ({ type: 'swap', item })),
+    ...filteredPinTopups.map((item): HistoryItem => ({ type: 'pin_topup', item })),
+    ...filteredTvTopups.map((item): HistoryItem => ({ type: 'tv_topup', item })),
   ].sort((a, b) => {
     const dateA = a.item.createdAt ?? '';
     const dateB = b.item.createdAt ?? '';
@@ -362,14 +477,16 @@ export default function History() {
   });
 
   const stats = {
-    total: boletos.length + recharges.length + sendPixOrders.length + pixCopiaCola.length,
+    total: boletos.length + recharges.length + sendPixOrders.length + pixCopiaCola.length + sideswapSwaps.length + pinTopups.length + tvTopups.length,
     boletos: boletos.length,
     recharges: recharges.length,
     envios: sendPixOrders.length,
     pix: pixCopiaCola.length,
-    pending: boletos.filter(b => b.status === 'PENDING').length + recharges.filter(r => r.status === 'PENDING').length + sendPixOrders.filter(s => s.status === 'PENDING').length + pixCopiaCola.filter(p => p.status === 'PENDING' || p.status === 'TXID_SUBMITTED').length,
-    paid: boletos.filter(b => b.status === 'PAID').length + recharges.filter(r => r.status === 'PAID').length + sendPixOrders.filter(s => s.status === 'COMPLETED').length + pixCopiaCola.filter(p => p.status === 'APPROVED').length,
-    problem: boletos.filter(b => b.status === 'PROBLEM').length + sendPixOrders.filter(s => s.status === 'FAILED').length + pixCopiaCola.filter(p => p.status === 'REJECTED').length,
+    swaps: sideswapSwaps.length,
+    gift: pinTopups.length + tvTopups.length,
+    pending: boletos.filter(b => b.status === 'PENDING').length + recharges.filter(r => r.status === 'PENDING').length + sendPixOrders.filter(s => s.status === 'PENDING').length + pixCopiaCola.filter(p => p.status === 'PENDING' || p.status === 'TXID_SUBMITTED').length + sideswapSwaps.filter(s => s.status === 'pending_deposit' || s.status === 'broadcasting').length + pinTopups.filter(p => p.status === 'PENDING').length + tvTopups.filter(t => t.status === 'PENDING').length,
+    paid: boletos.filter(b => b.status === 'PAID').length + recharges.filter(r => r.status === 'PAID').length + sendPixOrders.filter(s => s.status === 'COMPLETED').length + pixCopiaCola.filter(p => p.status === 'APPROVED').length + sideswapSwaps.filter(s => s.status === 'completed').length + pinTopups.filter(p => p.status === 'PAID').length + tvTopups.filter(t => t.status === 'PAID').length,
+    problem: boletos.filter(b => b.status === 'PROBLEM').length + sendPixOrders.filter(s => s.status === 'FAILED').length + pixCopiaCola.filter(p => p.status === 'REJECTED').length + sideswapSwaps.filter(s => s.status === 'failed').length,
   };
 
   if (loading) {
@@ -426,7 +543,7 @@ export default function History() {
       <div className="bg-gray-800/50 backdrop-blur-xl rounded-xl md:rounded-2xl p-4 md:p-6 border border-gray-700/50 mb-4 md:mb-6">
         <div className="flex flex-col gap-3 md:gap-4">
           <div className="flex flex-wrap gap-1.5 md:gap-2">
-            {(['all', 'boletos', 'recargas', 'envios', 'pix'] as const).map((t) => (
+            {(['all', 'boletos', 'recargas', 'envios', 'pix', 'swaps', 'gift'] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -435,7 +552,7 @@ export default function History() {
                   typeFilter === t ? 'bg-gradient-to-r from-bitcoin to-orange-500 text-black' : 'bg-gray-700/50 text-gray-400 hover:bg-gray-700'
                 }`}
               >
-                {t === 'all' ? 'Todos' : t === 'boletos' ? 'Boletos' : t === 'recargas' ? 'Recargas' : t === 'envios' ? 'Enviar Pix' : 'Pix C&C'}
+                {t === 'all' ? 'Todos' : t === 'boletos' ? 'Boletos' : t === 'recargas' ? 'Recargas' : t === 'envios' ? 'Enviar Pix' : t === 'pix' ? 'Pix C&C' : t === 'swaps' ? 'Swaps' : `Gift Cards${stats.gift > 0 ? ` (${stats.gift})` : ''}`}
               </button>
             ))}
           </div>
@@ -470,21 +587,21 @@ export default function History() {
 
       {/* Lista */}
       <div className="space-y-3 md:space-y-4">
-        {((typeFilter === 'all' && mergedItems.length === 0) || (typeFilter === 'boletos' && filteredBoletos.length === 0) || (typeFilter === 'recargas' && filteredRecharges.length === 0) || (typeFilter === 'envios' && filteredSendPix.length === 0) || (typeFilter === 'pix' && filteredPixCopiaCola.length === 0)) ? (
+        {((typeFilter === 'all' && mergedItems.length === 0) || (typeFilter === 'boletos' && filteredBoletos.length === 0) || (typeFilter === 'recargas' && filteredRecharges.length === 0) || (typeFilter === 'envios' && filteredSendPix.length === 0) || (typeFilter === 'pix' && filteredPixCopiaCola.length === 0) || (typeFilter === 'swaps' && filteredSideswapSwaps.length === 0) || (typeFilter === 'gift' && filteredPinTopups.length === 0 && filteredTvTopups.length === 0)) ? (
           <div className="bg-gray-800/50 backdrop-blur-xl rounded-xl md:rounded-2xl p-8 md:p-12 border border-gray-700/50 text-center">
             <HistoryIcon className="w-12 h-12 md:w-16 md:h-16 text-gray-600 mx-auto mb-3 md:mb-4" />
             <h3 className="text-lg font-bold text-gray-400 mb-2 md:text-xl">
-              {typeFilter === 'envios' ? 'Nenhum envio Pix encontrado' : typeFilter === 'recargas' ? 'Nenhuma recarga encontrada' : typeFilter === 'boletos' ? 'Nenhum boleto encontrado' : typeFilter === 'pix' ? 'Nenhum Pix Copia e Cola encontrado' : 'Nenhum registro'}
+              {typeFilter === 'envios' ? 'Nenhum envio Pix encontrado' : typeFilter === 'recargas' ? 'Nenhuma recarga encontrada' : typeFilter === 'boletos' ? 'Nenhum boleto encontrado' : typeFilter === 'pix' ? 'Nenhum Pix Copia e Cola encontrado' : typeFilter === 'swaps' ? 'Nenhum swap encontrado' : typeFilter === 'gift' ? 'Nenhum gift card encontrado' : 'Nenhum registro'}
             </h3>
             <p className="text-gray-500 text-sm md:text-base">
               {filter !== 'ALL'
                 ? `Nenhum item com status "${getStatusConfig(filter).label}"`
-                : typeFilter === 'envios' ? 'Você ainda não fez nenhum envio de Depix para Pix' : typeFilter === 'recargas' ? 'Você ainda não fez nenhuma recarga' : typeFilter === 'boletos' ? 'Você ainda não pagou nenhum boleto' : typeFilter === 'pix' ? 'Você ainda não usou o Pix Copia e Cola' : 'Você ainda não tem boletos, recargas nem envios Pix'}
+                : typeFilter === 'envios' ? 'Você ainda não fez nenhum envio de Depix para Pix' : typeFilter === 'recargas' ? 'Você ainda não fez nenhuma recarga' : typeFilter === 'boletos' ? 'Você ainda não pagou nenhum boleto' : typeFilter === 'pix' ? 'Você ainda não usou o Pix Copia e Cola' : typeFilter === 'swaps' ? 'Você ainda não realizou nenhum swap' : typeFilter === 'gift' ? 'Você ainda não comprou nenhum gift card' : 'Você ainda não tem boletos, recargas nem envios Pix'}
             </p>
           </div>
         ) : (
           <>
-          {(typeFilter === 'all' ? mergedItems : typeFilter === 'boletos' ? filteredBoletos.map((item): HistoryItem => ({ type: 'boleto' as const, item })) : typeFilter === 'recargas' ? filteredRecharges.map((item): HistoryItem => ({ type: 'recharge' as const, item })) : typeFilter === 'envios' ? filteredSendPix.map((item): HistoryItem => ({ type: 'sendpix' as const, item })) : filteredPixCopiaCola.map((item): HistoryItem => ({ type: 'pix' as const, item }))).map((entry) => {
+          {(typeFilter === 'all' ? mergedItems : typeFilter === 'boletos' ? filteredBoletos.map((item): HistoryItem => ({ type: 'boleto' as const, item })) : typeFilter === 'recargas' ? filteredRecharges.map((item): HistoryItem => ({ type: 'recharge' as const, item })) : typeFilter === 'envios' ? filteredSendPix.map((item): HistoryItem => ({ type: 'sendpix' as const, item })) : typeFilter === 'swaps' ? filteredSideswapSwaps.map((item): HistoryItem => ({ type: 'swap' as const, item })) : typeFilter === 'gift' ? [...filteredPinTopups.map((item): HistoryItem => ({ type: 'pin_topup' as const, item })), ...filteredTvTopups.map((item): HistoryItem => ({ type: 'tv_topup' as const, item }))].sort((a, b) => new Date(b.item.createdAt).getTime() - new Date(a.item.createdAt).getTime()) : filteredPixCopiaCola.map((item): HistoryItem => ({ type: 'pix' as const, item }))).map((entry) => {
             if (entry.type === 'sendpix') {
               const sp = entry.item;
               const statusConfig = getStatusConfig(sp.status);
@@ -581,15 +698,15 @@ export default function History() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-3">
                     <div>
                       <div className="text-gray-400 text-xs md:text-sm mb-1">Valor Pix</div>
-                      <p className="text-lg font-bold text-white md:text-xl">R$ {pix.valorOriginal.toFixed(2)}</p>
+                      <p className="text-lg font-bold text-white md:text-xl">R$ {Number(pix.valorOriginal).toFixed(2)}</p>
                     </div>
                     <div>
-                      <div className="text-gray-400 text-xs md:text-sm mb-1">Taxa ({(pix.taxa * 100).toFixed(1)}%)</div>
-                      <p className="text-white font-medium text-sm md:text-base">R$ {pix.valorTaxa.toFixed(2)}</p>
+                      <div className="text-gray-400 text-xs md:text-sm mb-1">Taxa ({(Number(pix.taxa) * 100).toFixed(1)}%)</div>
+                      <p className="text-white font-medium text-sm md:text-base">R$ {Number(pix.valorTaxa).toFixed(2)}</p>
                     </div>
                     <div>
                       <div className="text-gray-400 text-xs md:text-sm mb-1">Total Pago</div>
-                      <p className="text-white font-medium text-sm md:text-base">R$ {pix.totalFinal.toFixed(2)}</p>
+                      <p className="text-white font-medium text-sm md:text-base">R$ {Number(pix.totalFinal).toFixed(2)}</p>
                     </div>
                     <div>
                       <div className="text-gray-400 text-xs md:text-sm mb-1">Data</div>
@@ -701,6 +818,179 @@ export default function History() {
                         <Download className="w-3.5 h-3.5 md:w-4 md:h-4" /> Baixar comprovante
                       </button>
                     </div>
+                  )}
+                </div>
+              );
+            }
+            if (entry.type === 'swap') {
+              const sw = entry.item;
+              const swapStatusMap: Record<string, { label: string; color: string; bg: string; border: string; Icon: typeof CheckCircle2 }> = {
+                pending_deposit: { label: 'Aguardando depósito', color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/50', Icon: Clock },
+                broadcasting:    { label: 'Executando swap',     color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/50',   Icon: RefreshCw },
+                completed:       { label: 'Concluído',           color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/50',  Icon: CheckCircle2 },
+                failed:          { label: 'Falhou',              color: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/50',    Icon: XCircle },
+                refunded:        { label: 'Reembolsado',         color: 'text-gray-400',   bg: 'bg-gray-500/10',   border: 'border-gray-500/50',   Icon: CheckCircle2 },
+              };
+              const sc = swapStatusMap[sw.status] ?? swapStatusMap.pending_deposit;
+              const StatusIcon = sc.Icon;
+              const isFailed = sw.status === 'failed';
+              const rf = getRefundState(sw.id);
+              const alreadyRequested = !!sw.refundAddress;
+              return (
+                <div key={`sw-${sw.id}`} className="bg-gray-800/50 backdrop-blur-xl rounded-xl md:rounded-2xl p-4 md:p-6 border border-gray-700/50 hover:border-bitcoin/30 transition-all">
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-lg text-xs font-medium flex items-center gap-1">
+                      <ArrowRightLeft className="w-3 h-3" /> Swap
+                    </span>
+                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${sc.bg} border ${sc.border}`}>
+                      <StatusIcon className={`w-4 h-4 ${sc.color}`} />
+                      <span className={`font-medium text-xs ${sc.color}`}>{sc.label}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 ml-auto">{new Date(sw.createdAt).toLocaleDateString('pt-BR')}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
+                    <div>
+                      <p className="text-gray-500 mb-0.5">Enviei</p>
+                      <p className="text-white font-semibold">{sw.depositAmount ? `${sw.depositAmount} ${sw.depositAsset}` : sw.depositAsset}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 mb-0.5">Recebi</p>
+                      <p className="text-white font-semibold">{sw.settleAmount ? `${sw.settleAmount} ${sw.settleAsset}` : sw.settleAsset}</p>
+                    </div>
+                    {sw.depositTxid && (
+                      <div className="col-span-2">
+                        <p className="text-gray-500 mb-0.5">TXID depósito</p>
+                        <p className="text-gray-300 font-mono truncate">{sw.depositTxid.slice(0, 20)}…</p>
+                      </div>
+                    )}
+                    {sw.settleTxid && (
+                      <div className="col-span-2">
+                        <p className="text-gray-500 mb-0.5">TXID swap</p>
+                        <p className="text-gray-300 font-mono truncate">{sw.settleTxid.slice(0, 20)}…</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {isFailed && (
+                    <div className="mt-2 space-y-2">
+                      {sw.errorMessage && (
+                        <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{sw.errorMessage}</p>
+                      )}
+                      {alreadyRequested || rf.sent ? (
+                        <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+                          <p className="text-xs text-green-400 font-medium">✓ Reembolso solicitado</p>
+                          <p className="text-xs text-gray-400 mt-0.5 font-mono break-all">{sw.refundAddress || rf.addr}</p>
+                        </div>
+                      ) : (
+                        <div className="bg-gray-900/40 border border-[rgba(214,235,253,0.12)] rounded-lg p-3 space-y-2">
+                          <p className="text-xs text-gray-400 font-medium">Solicitar reembolso</p>
+                          <input
+                            type="text"
+                            placeholder="Endereço Liquid (lq1qq...)"
+                            value={rf.addr}
+                            onChange={e => setRefundStates(prev => ({ ...prev, [sw.id]: { ...getRefundState(sw.id), addr: e.target.value } }))}
+                            className="w-full bg-gray-800 border border-[rgba(214,235,253,0.15)] rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-bitcoin/40"
+                          />
+                          {rf.error && <p className="text-xs text-red-400">{rf.error}</p>}
+                          <button
+                            onClick={() => handleRefundSubmit(sw.id)}
+                            disabled={!rf.addr.trim() || rf.loading}
+                            className="w-full py-2 rounded-lg text-xs font-semibold transition-colors bg-bitcoin/10 border border-bitcoin/30 text-bitcoin hover:bg-bitcoin/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {rf.loading ? 'Enviando...' : 'Solicitar reembolso'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (entry.type === 'pin_topup') {
+              const pin = entry.item;
+              const statusConfig = getStatusConfig(pin.status);
+              const StatusIcon = statusConfig.icon;
+              return (
+                <div key={`pin-${pin.id}`} className="bg-gray-800/50 backdrop-blur-xl rounded-xl md:rounded-2xl p-4 md:p-6 border border-gray-700/50 hover:border-bitcoin/30 transition-all">
+                  <div className="flex flex-wrap items-center gap-2 mb-3 md:mb-4">
+                    <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
+                      <Gift className="w-3 h-3" /> Gift Card
+                    </span>
+                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${statusConfig.bg} border ${statusConfig.border}`}>
+                      <StatusIcon className={`w-4 h-4 ${statusConfig.color}`} />
+                      <span className={`font-medium text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 ml-auto">{new Date(pin.createdAt).toLocaleDateString('pt-BR')}</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                    <div>
+                      <div className="text-gray-400 text-xs mb-1">Produto</div>
+                      <p className="text-white font-semibold text-sm">{pin.productName}</p>
+                      <p className="text-gray-500 text-xs">{pin.brand}</p>
+                    </div>
+                    <div>
+                      <div className="text-gray-400 text-xs mb-1">Valor</div>
+                      <p className="text-lg font-bold text-white">R$ {pin.amount.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <div className="text-gray-400 text-xs mb-1">Total pago</div>
+                      <p className="text-white text-sm font-medium">R$ {pin.totalAmount.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  {pin.status === 'PAID' && pin.pinCode && (
+                    <div className="bg-gray-900/70 rounded-xl p-4 border border-green-500/30 mb-3">
+                      <p className="text-xs text-gray-500 mb-2">Código do gift card</p>
+                      <p className="font-mono text-xl font-bold text-green-400 tracking-widest">{pin.pinCode}</p>
+                      {pin.pinMessage && <p className="text-xs text-gray-500 mt-2 leading-relaxed">{pin.pinMessage}</p>}
+                    </div>
+                  )}
+                  {pin.status === 'PENDING' && (
+                    <p className="text-xs text-yellow-400/80 bg-yellow-500/10 rounded-lg px-3 py-2">Aguardando confirmação do pagamento na rede Liquid.</p>
+                  )}
+                </div>
+              );
+            }
+            if (entry.type === 'tv_topup') {
+              const tv = entry.item;
+              const statusConfig = getStatusConfig(tv.status);
+              const StatusIcon = statusConfig.icon;
+              return (
+                <div key={`tv-${tv.id}`} className="bg-gray-800/50 backdrop-blur-xl rounded-xl md:rounded-2xl p-4 md:p-6 border border-gray-700/50 hover:border-bitcoin/30 transition-all">
+                  <div className="flex flex-wrap items-center gap-2 mb-3 md:mb-4">
+                    <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-xs font-medium flex items-center gap-1">
+                      <Tv2 className="w-3 h-3" /> Recarga TV
+                    </span>
+                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${statusConfig.bg} border ${statusConfig.border}`}>
+                      <StatusIcon className={`w-4 h-4 ${statusConfig.color}`} />
+                      <span className={`font-medium text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 ml-auto">{new Date(tv.createdAt).toLocaleDateString('pt-BR')}</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div>
+                      <div className="text-gray-400 text-xs mb-1">Produto</div>
+                      <p className="text-white font-semibold text-sm">{tv.productName}</p>
+                      <p className="text-gray-500 text-xs">{tv.provider}</p>
+                    </div>
+                    <div>
+                      <div className="text-gray-400 text-xs mb-1">Valor</div>
+                      <p className="text-lg font-bold text-white">R$ {tv.amount.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <div className="text-gray-400 text-xs mb-1">Total pago</div>
+                      <p className="text-white text-sm font-medium">R$ {tv.totalAmount.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  {tv.status === 'PAID' && tv.authorizationCode && (
+                    <div className="mt-3 bg-gray-900/70 rounded-xl p-3 border border-green-500/30">
+                      <p className="text-xs text-gray-500 mb-1">Código de autorização</p>
+                      <p className="font-mono text-sm font-bold text-green-400">{tv.authorizationCode}</p>
+                      {tv.serialNumber && <p className="text-xs text-gray-500 mt-1">NSU: {tv.serialNumber}</p>}
+                    </div>
+                  )}
+                  {tv.status === 'PENDING' && (
+                    <p className="mt-3 text-xs text-yellow-400/80 bg-yellow-500/10 rounded-lg px-3 py-2">Aguardando confirmação do pagamento na rede Liquid.</p>
                   )}
                 </div>
               );

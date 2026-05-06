@@ -7,7 +7,7 @@ import {
   Gift, Tv2, Loader2, Copy, Check, Clock, AlertCircle,
   ChevronRight as ChevronRightIcon,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { CATEGORY_LABELS } from '../../constants/productForm';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { CurrencySelector, type Currency } from '../../components/CurrencySelector';
@@ -206,6 +206,7 @@ function RvHubBrandCard({
 
 export default function Marketplace() {
   const { triggerPushActivation } = useNotifications();
+  const navigate = useNavigate();
 
   // ── Dados ──────────────────────────────────────────────────────────────────
   const [pinProducts, setPinProducts]   = useState<RvHubProduct[]>([]);
@@ -415,9 +416,14 @@ export default function Marketplace() {
             {isPin && order.pinMessage && (
               <p className="text-xs text-gray-500 leading-relaxed">{order.pinMessage}</p>
             )}
-            <button onClick={resetPurchase} className="w-full py-2.5 rounded-xl bg-bitcoin text-black font-bold text-sm hover:bg-orange-400">
-              {isPin ? 'Comprar outro' : 'Nova recarga'}
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => navigate('/historico')} className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-white font-semibold text-sm transition-colors">
+                Ver no Histórico
+              </button>
+              <button onClick={resetPurchase} className="flex-1 py-2.5 rounded-xl bg-bitcoin text-black font-bold text-sm hover:bg-orange-400">
+                {isPin ? 'Comprar outro' : 'Nova recarga'}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="bg-gray-800/60 rounded-xl border border-gray-700/40 p-5 space-y-4">
@@ -568,8 +574,8 @@ export default function Marketplace() {
   return (
     <div className="space-y-5 animate-fade-in">
       <Helmet>
-        <title>Loja | Gift Cards, TV e Produtos Digitais | PagDepix</title>
-        <meta name="description" content="Gift cards, recargas de TV e produtos digitais pagos com DePix. Google Play, Netflix, Xbox, SKY e muito mais." />
+        <title>Loja | Gift Cards e Streaming com Criptomoedas | PagDepix</title>
+        <meta name="description" content="Compre gift cards, streaming e produtos digitais com DePix, USDT, Bitcoin e mais. Google Play, Netflix, Xbox, SKY e muito mais." />
       </Helmet>
 
       {/* Hero compacto */}
@@ -580,9 +586,9 @@ export default function Marketplace() {
             <span className="text-bitcoin font-semibold text-xs">Loja PagDepix</span>
           </div>
           <h1 className="text-base font-bold text-white leading-snug">
-            Gift Cards, TV e Produtos Digitais
+            Compre Gift Cards, Streaming e Produtos Digitais
           </h1>
-          <p className="text-xs text-gray-500 mt-0.5">Pague com DePix em segundos</p>
+          <p className="text-xs text-gray-400 mt-0.5">Pague com Criptomoedas — DePix, USDT, Bitcoin e mais, de forma rápida e segura</p>
         </div>
         <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-bitcoin/15 flex items-center justify-center">
           <ShoppingBag className="w-5 h-5 text-bitcoin" />
