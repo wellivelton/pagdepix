@@ -23,7 +23,7 @@ const CURRENCIES: {
     label: 'Depix',
     sublabel: 'Liquid Network',
     symbol: 'DPX',
-    icon: '/crypto/depix.svg',
+    icon: '/crypto/depix.png',
     color: 'border-orange-500 bg-orange-500/10 text-orange-300',
     activeRing: 'ring-orange-500/60',
   },
