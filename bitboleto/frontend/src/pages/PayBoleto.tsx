@@ -437,7 +437,12 @@ export default function PayBoleto() {
     const poll = async () => {
       try {
         const { data } = await api.get(`/boleto/batch/${batch.id}`);
-        if (data.batch?.status === 'PAID') {
+        // Detecta tanto TXID_SUBMITTED (crypto recebido, admin pendente) quanto PAID (aprovado)
+        const batchPaid = data.batch?.status === 'PAID';
+        const anyDetected = data.batch?.boletos?.some(
+          (b: any) => b.status === 'TXID_SUBMITTED' || b.status === 'PAID',
+        );
+        if (batchPaid || anyDetected) {
           setPaymentDetected(true);
           triggerPushActivation('boleto');
           if (pollingRef.current) clearInterval(pollingRef.current);
