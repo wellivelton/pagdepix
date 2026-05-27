@@ -75,15 +75,32 @@ router.get('/rates', async (_req: Request, res: Response) => {
 });
 
 // ========================================
-// POST /boleto/calculate — Preview de taxa
+// POST /boleto/calculate — Preview de taxa (com suporte opcional a cupom)
 // ========================================
 router.post('/boleto/calculate', async (req: Request, res: Response) => {
   try {
-    const { amount, paymentCurrency } = req.body;
+    const { amount, couponCode, paymentCurrency } = req.body;
     if (!amount || isNaN(Number(amount))) {
       return res.status(400).json({ error: 'amount is required (number)' });
     }
-    const result = await calculateFee(Number(amount), undefined, undefined, paymentCurrency);
+
+    // Extrair userId do token JWT se presente (rota é pública, mas logado recebe preview com cupom)
+    let userId: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const decoded = jwt.verify(authHeader.replace('Bearer ', ''), process.env.JWT_SECRET || '') as any;
+        userId = decoded?.userId;
+      } catch { /* token inválido ou ausente — calcula sem userId */ }
+    }
+
+    const result = await calculateFee(
+      Number(amount),
+      couponCode?.trim() || undefined,
+      userId,
+      paymentCurrency,
+    );
     return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ error: 'Internal error' });
