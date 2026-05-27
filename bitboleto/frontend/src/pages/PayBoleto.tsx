@@ -572,12 +572,18 @@ export default function PayBoleto() {
     setCouponError('');
     try {
       const { data } = await api.post('/boleto/calculate', { amount: val, couponCode: code, paymentCurrency });
-      if (data.isValid) {
+      if (data.isValid && data.cupomValido) {
         setAppliedCoupon(code);
         setCouponCode(code);
       } else {
         setAppliedCoupon(null);
-        setCouponError(data.error || 'Cupom inválido ou inativo.');
+        setCouponError(
+          data.couponError ||
+          data.error ||
+          (data.isValid && !data.cupomValido
+            ? `Cupom não aplicável para este boleto (valor mínimo: R$ 40,00)`
+            : 'Cupom inválido ou inativo.')
+        );
       }
     } catch (e: any) {
       setCouponError(e.response?.data?.error || 'Erro ao validar cupom.');

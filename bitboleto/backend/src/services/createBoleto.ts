@@ -601,13 +601,15 @@ export const calculateFee = (amount: number, couponCode?: string, userId?: strin
       let descontoAplicado = 0;
       let cupomValido = false;
 
+      let couponError: string | null = null;
+
       if (couponCode && userId) {
         try {
           const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { email: true, telegram: true }
           });
-          
+
           if (user) {
             // Validação completa de antifraude (igual à criação real)
             const validation = await validateCouponUsage(
@@ -620,20 +622,26 @@ export const calculateFee = (amount: number, couponCode?: string, userId?: strin
               amount,
               40 // mínimo para boleto
             );
-            
+
             if (validation.valid) {
               const cupom = await prisma.coupon.findUnique({
                 where: { code: couponCode.toUpperCase() }
               });
-              
+
               const cupomDisponivel = cupom?.isActive && (cupom.maxUsage == null || cupom.usageCount < cupom.maxUsage);
               const usuarioPodeUsarCupom = await isUserVerified(userId);
-              
+
               if (cupom && cupomDisponivel && taxRule && usuarioPodeUsarCupom) {
                 const maxDiscount = getMaxCouponDiscountFromRule(taxRule);
                 descontoAplicado = Math.min(cupom.discount, maxDiscount);
                 cupomValido = true;
+              } else if (!cupomDisponivel) {
+                couponError = 'Cupom inativo ou limite de usos atingido.';
+              } else if (!usuarioPodeUsarCupom) {
+                couponError = 'Sua conta precisa ser verificada para usar cupons.';
               }
+            } else {
+              couponError = validation.reason || 'Cupom não aplicável para este pedido.';
             }
           }
         } catch (err) {
@@ -721,6 +729,7 @@ export const calculateFee = (amount: number, couponCode?: string, userId?: strin
         totalBeforeDiscount: taxCalculation.totalBeforeDiscount,
         discountAmount: isReferralPreview ? referralDiscountAmount : taxCalculation.discountAmount,
         cupomValido,
+        couponError: cupomValido ? null : (couponError ?? null),
         paymentCurrency: cur,
         exchangeRate: exchangeRateVal,
         cryptoAmount: cryptoAmountVal,
