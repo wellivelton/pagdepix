@@ -21,7 +21,7 @@ const CURRENCIES: {
   {
     id: 'DEPIX',
     label: 'Depix',
-    sublabel: 'DPX · Liquid',
+    sublabel: 'Liquid Network',
     symbol: 'DPX',
     icon: '/crypto/depix.svg',
     color: 'border-orange-500 bg-orange-500/10 text-orange-300',
@@ -39,7 +39,7 @@ const CURRENCIES: {
   {
     id: 'BTC',
     label: 'L-BTC',
-    sublabel: 'Lightning · sats',
+    sublabel: 'Liquid Network',
     symbol: 'sats',
     icon: '/crypto/bitcoin.svg',
     color: 'border-yellow-500 bg-yellow-500/10 text-yellow-300',
