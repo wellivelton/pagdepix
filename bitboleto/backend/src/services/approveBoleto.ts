@@ -37,7 +37,7 @@ export async function approveBoletoService(
     await prisma.$transaction(async (tx) => {
       // 1. Atomic claim — PENDING → PAID
       const claimed = await tx.boleto.updateMany({
-        where: { id: boletoId, status: 'PENDING' },
+        where: { id: boletoId, status: { in: ['PENDING', 'TXID_SUBMITTED'] } },
         data: {
           status: 'PAID',
           paidAt: new Date(),

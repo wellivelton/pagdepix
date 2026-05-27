@@ -9,6 +9,7 @@ import { dispatchWebhook } from '../services/webhookService';
 import { env } from '../config/env';
 import { notifyBoletoApproved, notifyAffiliateCommission, notifyWithdrawalProcessed } from '../services/push.service';
 import { approveBoletoService } from '../services/approveBoleto';
+import { asaasPayBill, asaasIsConfigured } from '../services/asaas.service';
 
 // Re-exportar funções de manutenção (definidas em maintenanceController para evitar dependência circular)
 export { getMaintenanceStatusPublic, getAdminMaintenance, setMaintenance } from './maintenanceController';
@@ -385,7 +386,36 @@ export const approveBoleto = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
+    // Buscar boleto para ter código de barras e valor
+    const boleto = await prisma.boleto.findUnique({ where: { id } });
+    if (!boleto) return res.status(404).json({ error: 'Boleto não encontrado.' });
+
+    // Auto-pagamento via Asaas (se configurado e boleto ainda não pago por Asaas)
+    let asaasPaymentId: string | undefined;
     let receiptUrl: string | undefined;
+
+    if (asaasIsConfigured() && !(boleto as any).paidViaAsaas) {
+      const barcode = (boleto as any).barcode || (boleto as any).digitableLine;
+      if (!barcode) {
+        return res.status(400).json({ error: 'Boleto sem código de barras para pagamento automático.' });
+      }
+
+      console.log(`[approveBoleto] Pagando boleto ${id} via Asaas — valor R$${boleto.amount}`);
+      const payResult = await asaasPayBill(barcode, Number((boleto as any).amount));
+
+      if (!payResult.success) {
+        console.error(`[approveBoleto] Asaas recusou: ${payResult.error}`);
+        return res.status(502).json({
+          error: `Asaas recusou o pagamento: ${payResult.error}`,
+        });
+      }
+
+      asaasPaymentId = payResult.id;
+      receiptUrl = payResult.transactionReceiptUrl || undefined;
+      console.log(`[approveBoleto] Asaas OK — paymentId=${asaasPaymentId}`);
+    }
+
+    // Se admin subiu comprovante manual, prioriza
     if (file) {
       const baseUrl = process.env.APP_URL || 'http://localhost:3001';
       receiptUrl = `${baseUrl}/uploads/boletos/${file.filename}`;
@@ -394,6 +424,8 @@ export const approveBoleto = async (req: Request, res: Response) => {
     const result = await approveBoletoService(id, {
       receiptUrl,
       adminNotes: req.body?.adminNotes?.trim() || undefined,
+      paidViaAsaas: !!asaasPaymentId,
+      asaasPaymentId,
     });
 
     if (!result.success) {
