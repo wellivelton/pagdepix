@@ -25,12 +25,12 @@ ALTER TABLE "Boleto" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
 -- ─── MobileRecharge ──────────────────────────────────────────────────────────
 
 ALTER TABLE "MobileRecharge" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
-ALTER TABLE "MobileRecharge" ADD CONSTRAINT IF NOT EXISTS "MobileRecharge_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
+ALTER TABLE "MobileRecharge" ADD CONSTRAINT "MobileRecharge_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
 
 -- ─── BoletoBatch ─────────────────────────────────────────────────────────────
 
 ALTER TABLE "BoletoBatch" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
-ALTER TABLE "BoletoBatch" ADD CONSTRAINT IF NOT EXISTS "BoletoBatch_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
+ALTER TABLE "BoletoBatch" ADD CONSTRAINT "BoletoBatch_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
 
 -- ─── PixCopiaCola — new columns ──────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ ALTER TABLE "PixCopiaCola"
   ADD COLUMN IF NOT EXISTS "cancelReason"      TEXT;
 
 ALTER TABLE "PixCopiaCola" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
-ALTER TABLE "PixCopiaCola" ADD CONSTRAINT IF NOT EXISTS "PixCopiaCola_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
+ALTER TABLE "PixCopiaCola" ADD CONSTRAINT "PixCopiaCola_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
 
 -- ─── PixCopiaCola — Float → Decimal on financial columns ─────────────────────
 -- USING clause required: PostgreSQL needs explicit cast from double precision.
