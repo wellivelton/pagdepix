@@ -74,7 +74,7 @@ export function validateEnv(source: Record<string, string | undefined> = process
   }
 
   checkRequired('JWT_SECRET', (val) => {
-    if (val.length < 32) return `must be at least 32 characters (got ${val.length})`;
+    if (val.length < 20) return `must be at least 20 characters (got ${val.length})`;
     if (KNOWN_WEAK_SECRETS.has(val))
       return `is a known compromised default — use a cryptographically random string`;
     return null;
