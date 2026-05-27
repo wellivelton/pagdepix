@@ -160,23 +160,25 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return user.role === 'ADMIN' ? <>{children}</> : <Navigate to="/dashboard" />;
 }
 
-/** Loja em manutenção: apenas ADMIN acessa; demais veem aviso. */
-function LojaAdminGuard({ children }: { children: React.ReactNode }) {
+/** Página em manutenção: apenas ADMIN acessa; demais veem aviso. */
+function AdminOnlyGuard({ children }: { children: React.ReactNode }) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   if (user.role === 'ADMIN') return <>{children}</>;
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 px-4 text-center">
       <div className="text-6xl">🔧</div>
       <div>
-        <h1 className="text-2xl font-bold text-white mb-2">Loja em manutenção</h1>
+        <h1 className="text-2xl font-bold text-white mb-2">Página em manutenção</h1>
         <p className="text-gray-400 max-w-sm">
-          Estamos melhorando nossa loja para oferecer a melhor experiência possível.
+          Esta funcionalidade está temporariamente indisponível para manutenção.
           Em breve estará disponível novamente.
         </p>
       </div>
     </div>
   );
 }
+/** Alias para compatibilidade com rotas da loja já existentes. */
+const LojaAdminGuard = AdminOnlyGuard;
 
 function AffiliateRoute({ children }: { children: React.ReactNode }) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -227,7 +229,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <Swap />
+                <AdminOnlyGuard><Swap /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }
@@ -267,7 +269,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <RecargaCelular />
+                <AdminOnlyGuard><RecargaCelular /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }
@@ -278,7 +280,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <PayBoleto />
+                <AdminOnlyGuard><PayBoleto /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }
@@ -288,7 +290,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <PagamentoConta />
+                <AdminOnlyGuard><PagamentoConta /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }
@@ -298,7 +300,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <AreaPix />
+                <AdminOnlyGuard><AreaPix /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }
@@ -308,7 +310,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <PixCopiaCola />
+                <AdminOnlyGuard><PixCopiaCola /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }
@@ -318,7 +320,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard>
-                <EnviarPix />
+                <AdminOnlyGuard><EnviarPix /></AdminOnlyGuard>
               </Dashboard>
             </ProtectedRoute>
           }

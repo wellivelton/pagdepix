@@ -248,10 +248,12 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
       label: 'PAGAMENTOS',
       labelColor: 'text-green-400',
       items: [
-        { icon: FileText, label: 'Pagar Boleto', path: '/pagar' },
-        { icon: Smartphone, label: 'Recarga de Celular', path: '/recarga' },
-        { icon: QrCode, label: 'Área Pix', path: '/area-pix' },
-        { icon: ArrowLeftRight, label: 'Swap Cripto', path: '/swap' },
+        ...(isAdmin ? [
+          { icon: FileText, label: 'Pagar Boleto', path: '/pagar' },
+          { icon: Smartphone, label: 'Recarga de Celular', path: '/recarga' },
+          { icon: QrCode, label: 'Área Pix', path: '/area-pix' },
+          { icon: ArrowLeftRight, label: 'Swap Cripto', path: '/swap' },
+        ] : []),
         { icon: History, label: 'Histórico de Transações', path: '/historico' },
       ],
     },
