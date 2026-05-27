@@ -12,6 +12,8 @@
 --   * MobileRechargeStatus +PROCESSING       (20260501000000)
 --   * MobileRecharge +asaasRechargeId/Status (20260501000000)
 --   * PixCopiaColaStatus +VELORA_PROCESSING  (20260430000000)
+--
+-- NOTE: BoletoBatch maps to "boleto_batches", PixCopiaCola maps to "pix_copia_cola"
 
 -- ─── PixCopiaColaStatus enum ─────────────────────────────────────────────────
 
@@ -27,14 +29,14 @@ ALTER TABLE "Boleto" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
 ALTER TABLE "MobileRecharge" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
 ALTER TABLE "MobileRecharge" ADD CONSTRAINT "MobileRecharge_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
 
--- ─── BoletoBatch ─────────────────────────────────────────────────────────────
+-- ─── BoletoBatch (mapped to boleto_batches) ──────────────────────────────────
 
-ALTER TABLE "BoletoBatch" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
-ALTER TABLE "BoletoBatch" ADD CONSTRAINT "BoletoBatch_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
+ALTER TABLE "boleto_batches" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
+ALTER TABLE "boleto_batches" ADD CONSTRAINT "boleto_batches_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
 
--- ─── PixCopiaCola — new columns ──────────────────────────────────────────────
+-- ─── PixCopiaCola (mapped to pix_copia_cola) — new columns ───────────────────
 
-ALTER TABLE "PixCopiaCola"
+ALTER TABLE "pix_copia_cola"
   ADD COLUMN IF NOT EXISTS "taxaFixa"          DECIMAL(5,2)  NOT NULL DEFAULT 2.5,
   ADD COLUMN IF NOT EXISTS "veloraExternalId"  TEXT,
   ADD COLUMN IF NOT EXISTS "veloraStatus"      TEXT,
@@ -45,19 +47,19 @@ ALTER TABLE "PixCopiaCola"
   ADD COLUMN IF NOT EXISTS "cancelledAt"       TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "cancelReason"      TEXT;
 
-ALTER TABLE "PixCopiaCola" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
-ALTER TABLE "PixCopiaCola" ADD CONSTRAINT "PixCopiaCola_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
+ALTER TABLE "pix_copia_cola" ADD COLUMN IF NOT EXISTS "liquidAddressIndex" INTEGER;
+ALTER TABLE "pix_copia_cola" ADD CONSTRAINT "pix_copia_cola_liquidAddressIndex_key" UNIQUE ("liquidAddressIndex");
 
 -- ─── PixCopiaCola — Float → Decimal on financial columns ─────────────────────
 -- USING clause required: PostgreSQL needs explicit cast from double precision.
 -- Existing rows: values are preserved; precision loss only if value had >12
 -- integer digits (impossible for BRL amounts in this system).
 
-ALTER TABLE "PixCopiaCola"
+ALTER TABLE "pix_copia_cola"
   ALTER COLUMN "valorOriginal" TYPE DECIMAL(12,2) USING "valorOriginal"::DECIMAL(12,2),
   ALTER COLUMN "taxa"          TYPE DECIMAL(8,6)  USING "taxa"::DECIMAL(8,6),
   ALTER COLUMN "valorTaxa"     TYPE DECIMAL(12,2) USING "valorTaxa"::DECIMAL(12,2),
   ALTER COLUMN "totalFinal"    TYPE DECIMAL(12,2) USING "totalFinal"::DECIMAL(12,2);
 
-ALTER TABLE "PixCopiaCola"
+ALTER TABLE "pix_copia_cola"
   ALTER COLUMN "exchangeRate" TYPE DECIMAL(18,8) USING "exchangeRate"::DECIMAL(18,8);
