@@ -237,13 +237,13 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
     {
       items: [{ icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' }],
     },
-    {
+    ...(isAdmin ? [{
       label: 'LOJA',
       labelColor: 'text-purple-400',
       items: [
         { icon: ShoppingBag, label: 'Loja', path: '/loja' },
       ],
-    },
+    }] : []),
     {
       label: 'PAGAMENTOS',
       labelColor: 'text-green-400',

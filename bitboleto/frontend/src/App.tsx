@@ -160,6 +160,24 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return user.role === 'ADMIN' ? <>{children}</> : <Navigate to="/dashboard" />;
 }
 
+/** Loja em manutenção: apenas ADMIN acessa; demais veem aviso. */
+function LojaAdminGuard({ children }: { children: React.ReactNode }) {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  if (user.role === 'ADMIN') return <>{children}</>;
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 px-4 text-center">
+      <div className="text-6xl">🔧</div>
+      <div>
+        <h1 className="text-2xl font-bold text-white mb-2">Loja em manutenção</h1>
+        <p className="text-gray-400 max-w-sm">
+          Estamos melhorando nossa loja para oferecer a melhor experiência possível.
+          Em breve estará disponível novamente.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AffiliateRoute({ children }: { children: React.ReactNode }) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   return user.role === 'AFFILIATE' ? <>{children}</> : <Navigate to="/dashboard" />;
@@ -195,15 +213,15 @@ export default function App() {
         <Route path="/afiliados" element={<Afiliados />} />
         <Route path="/pay/:slug" element={<PayLink />} />
         <Route path="/page/:slug" element={<PayPage />} />
-        <Route path="/loja" element={<ProtectedRoute><Dashboard><Marketplace /></Dashboard></ProtectedRoute>} />
-        <Route path="/loja/produto/:slug" element={<ProtectedRoute><Dashboard><ProductDetail /></Dashboard></ProtectedRoute>} />
-        <Route path="/loja/checkout/:productId" element={<ProtectedRoute><Dashboard><Checkout /></Dashboard></ProtectedRoute>} />
-        <Route path="/loja/carrinho" element={<ProtectedRoute><Dashboard><Cart /></Dashboard></ProtectedRoute>} />
-        <Route path="/loja/favoritos" element={<ProtectedRoute><Dashboard><Wishlist /></Dashboard></ProtectedRoute>} />
-        <Route path="/loja/checkout-cart" element={<ProtectedRoute><Dashboard><CheckoutCart /></Dashboard></ProtectedRoute>} />
-        <Route path="/minhas-compras" element={<ProtectedRoute><Dashboard><MyPurchases /></Dashboard></ProtectedRoute>} />
-        <Route path="/minhas-compras/:orderId" element={<ProtectedRoute><Dashboard><OrderDetail /></Dashboard></ProtectedRoute>} />
-        <Route path="/loja/notificacoes" element={<ProtectedRoute><Dashboard><MarketplaceNotifications /></Dashboard></ProtectedRoute>} />
+        <Route path="/loja" element={<ProtectedRoute><Dashboard><LojaAdminGuard><Marketplace /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/loja/produto/:slug" element={<ProtectedRoute><Dashboard><LojaAdminGuard><ProductDetail /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/loja/checkout/:productId" element={<ProtectedRoute><Dashboard><LojaAdminGuard><Checkout /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/loja/carrinho" element={<ProtectedRoute><Dashboard><LojaAdminGuard><Cart /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/loja/favoritos" element={<ProtectedRoute><Dashboard><LojaAdminGuard><Wishlist /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/loja/checkout-cart" element={<ProtectedRoute><Dashboard><LojaAdminGuard><CheckoutCart /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/minhas-compras" element={<ProtectedRoute><Dashboard><LojaAdminGuard><MyPurchases /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/minhas-compras/:orderId" element={<ProtectedRoute><Dashboard><LojaAdminGuard><OrderDetail /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
+        <Route path="/loja/notificacoes" element={<ProtectedRoute><Dashboard><LojaAdminGuard><MarketplaceNotifications /></LojaAdminGuard></Dashboard></ProtectedRoute>} />
         <Route
           path="/swap"
           element={
@@ -214,8 +232,8 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="/loja/vendedor/:sellerId" element={<SellerPage />} />
-        <Route path="/loja/:storeSlug" element={<PublicStorePage />} />
+        <Route path="/loja/vendedor/:sellerId" element={<LojaAdminGuard><SellerPage /></LojaAdminGuard>} />
+        <Route path="/loja/:storeSlug" element={<LojaAdminGuard><PublicStorePage /></LojaAdminGuard>} />
         {/* Landing B2B Modo Comércio — canal principal de aquisição */}
         <Route path="/comercio" element={<CommerceLanding />} />
         <Route path="/comercio/cadastro" element={<Navigate to="/login" replace />} />
