@@ -9,10 +9,42 @@ interface CurrencySelectorProps {
   disabled?: boolean;
 }
 
-const CURRENCIES: { id: Currency; label: string; symbol: string; color: string }[] = [
-  { id: 'DEPIX', label: 'Depix (DPX)', symbol: 'DPX', color: 'border-orange-500 bg-orange-500/10 text-orange-400' },
-  { id: 'USDT', label: 'USDT (Liquid)', symbol: 'USDT', color: 'border-green-500 bg-green-500/10 text-green-400' },
-  { id: 'BTC', label: 'Bitcoin (L-BTC)', symbol: 'sats', color: 'border-yellow-500 bg-yellow-500/10 text-yellow-400' },
+const CURRENCIES: {
+  id: Currency;
+  label: string;
+  sublabel: string;
+  symbol: string;
+  icon: string;
+  color: string;
+  activeRing: string;
+}[] = [
+  {
+    id: 'DEPIX',
+    label: 'Depix',
+    sublabel: 'DPX · Liquid',
+    symbol: 'DPX',
+    icon: '/crypto/depix.svg',
+    color: 'border-orange-500 bg-orange-500/10 text-orange-300',
+    activeRing: 'ring-orange-500/60',
+  },
+  {
+    id: 'USDT',
+    label: 'USDT',
+    sublabel: 'Liquid Network',
+    symbol: 'USDT',
+    icon: '/crypto/usdt.svg',
+    color: 'border-green-500 bg-green-500/10 text-green-300',
+    activeRing: 'ring-green-500/60',
+  },
+  {
+    id: 'BTC',
+    label: 'L-BTC',
+    sublabel: 'Lightning · sats',
+    symbol: 'sats',
+    icon: '/crypto/bitcoin.svg',
+    color: 'border-yellow-500 bg-yellow-500/10 text-yellow-300',
+    activeRing: 'ring-yellow-500/60',
+  },
 ];
 
 export function CurrencySelector({ value, onChange, disabled }: CurrencySelectorProps) {
@@ -31,7 +63,7 @@ export function CurrencySelector({ value, onChange, disabled }: CurrencySelector
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-400">Moeda de pagamento</label>
+      <label className="block text-sm font-medium text-app-muted">Moeda de pagamento</label>
       <div className="grid grid-cols-3 gap-2">
         {CURRENCIES.map(c => {
           const isAvail = available.has(c.id);
@@ -42,22 +74,37 @@ export function CurrencySelector({ value, onChange, disabled }: CurrencySelector
               type="button"
               disabled={disabled || !isAvail}
               onClick={() => onChange(c.id)}
-              className={`p-2.5 md:p-3 rounded-lg md:rounded-xl border text-xs md:text-sm font-medium transition-all ${
-                isSelected
-                  ? c.color + ' ring-1 ring-current'
+              className={`
+                relative flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border
+                text-xs font-medium transition-all duration-150
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-app-surface
+                ${isSelected
+                  ? `${c.color} ring-1 ${c.activeRing} shadow-sm`
                   : isAvail
-                    ? 'border-gray-600 bg-gray-900/50 text-gray-400 hover:border-gray-500'
-                    : 'border-gray-700 bg-gray-900/30 text-gray-600 opacity-50 cursor-not-allowed'
-              }`}
+                    ? 'border-app-stroke bg-app-elevated text-app-muted hover:border-app-stroke/80 hover:bg-app-surface hover:text-app-text'
+                    : 'border-app-stroke/40 bg-app-elevated/50 text-app-subtle opacity-40 cursor-not-allowed'
+                }
+              `}
             >
-              {c.label}
+              <img
+                src={c.icon}
+                alt={c.label}
+                className={`w-7 h-7 object-contain transition-opacity ${!isAvail ? 'opacity-30' : ''}`}
+                loading="eager"
+                draggable={false}
+              />
+              <span className="font-semibold text-[13px] leading-none">{c.label}</span>
+              <span className={`text-[10px] leading-none ${isSelected ? 'opacity-80' : 'text-app-subtle'}`}>
+                {c.sublabel}
+              </span>
             </button>
           );
         })}
       </div>
       {rates && value !== 'DEPIX' && (
-        <p className="text-xs text-gray-500">
-          Cotação: {value === 'USDT'
+        <p className="text-[11px] text-app-subtle">
+          Cotação:{' '}
+          {value === 'USDT'
             ? `1 USD = R$ ${rates.usdBrl?.toFixed(2).replace('.', ',')}`
             : `1 BTC = R$ ${rates.btcBrl?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
           }
