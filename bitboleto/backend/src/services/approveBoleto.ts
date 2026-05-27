@@ -197,5 +197,23 @@ export async function approveBoletoService(
     ).catch(() => {});
   }
 
+  // Sync batch status: if all boletos in the batch are PAID, mark batch as PAID too
+  const batchId = (boleto as any).batchId as string | null;
+  if (batchId) {
+    try {
+      const remaining = await prisma.boleto.count({
+        where: { batchId, status: { not: 'PAID' } },
+      });
+      if (remaining === 0) {
+        await (prisma as any).boletoBatch.update({
+          where: { id: batchId },
+          data: { status: 'PAID', confirmedAt: new Date() },
+        });
+      }
+    } catch (err) {
+      console.error('[approveBoleto] Failed to sync batch status:', err);
+    }
+  }
+
   return { success: true, boleto: updated };
 }

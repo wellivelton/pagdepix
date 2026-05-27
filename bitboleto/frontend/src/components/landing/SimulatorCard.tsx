@@ -16,13 +16,13 @@ export default function SimulatorCard() {
   } = useSimulator();
 
   return (
-    <div className="bg-gray-900 rounded-2xl p-4 md:p-8 border border-gray-700/60 shadow-2xl">
-      <h3 className="text-base md:text-lg font-bold text-white mb-4 md:mb-6 flex items-center gap-2">
-        <BarChart3 className="w-4 h-4 md:w-5 md:h-5 text-bitcoin" />
+    <div className="bg-gray-900 rounded-xl p-4 border border-[rgba(214,235,253,0.19)] shadow-[rgba(176,199,217,0.145)_0px_0px_0px_1px]">
+      <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+        <BarChart3 className="w-4 h-4 text-bitcoin" />
         Simule sua taxa agora
       </h3>
 
-      <div className="space-y-4 md:space-y-5">
+      <div className="space-y-3">
         {/* Input */}
         <div>
           <label
@@ -45,7 +45,7 @@ export default function SimulatorCard() {
               placeholder="100,00"
               aria-invalid={!!simulatorError}
               aria-describedby={simulatorError ? 'sim-error' : undefined}
-              className="w-full pl-10 pr-4 py-3 text-sm bg-gray-800/60 border border-gray-700 rounded-xl
+              className="w-full pl-10 pr-4 py-2 text-sm bg-gray-800/60 border border-[rgba(214,235,253,0.19)] rounded-lg
                 text-white placeholder-gray-600 transition-all
                 focus:ring-2 focus:ring-bitcoin/30 focus:border-bitcoin focus-visible:outline-none"
             />
@@ -67,8 +67,8 @@ export default function SimulatorCard() {
 
         {/* Result */}
         {simulatorResult?.isValid && !simulatorLoading && (
-          <div className="space-y-4 pt-4 border-t border-gray-800 animate-fade-in">
-            <div className="bg-bitcoin/10 border border-bitcoin/25 rounded-xl p-3.5">
+          <div className="space-y-3 pt-3 border-t border-[rgba(214,235,253,0.19)] animate-fade-in">
+            <div className="bg-bitcoin/10 border border-bitcoin/25 rounded-lg p-2.5">
               <p className="text-xs text-gray-400 mb-0.5">Faixa aplicada</p>
               <p className="text-sm font-bold text-bitcoin">
                 {simulatorResult.taxRule?.description || 'Taxa inteligente'}
@@ -92,7 +92,7 @@ export default function SimulatorCard() {
                 <span>Taxa fixa</span>
                 <span>R$ {simulatorResult.fixedFee.toFixed(2).replace('.', ',')}</span>
               </div>
-              <div className="border-t border-gray-800 pt-2 flex justify-between font-bold">
+              <div className="border-t border-[rgba(214,235,253,0.19)] pt-2 flex justify-between font-bold">
                 <span className="text-white">Total em DPX</span>
                 <span className="text-bitcoin">
                   {simulatorResult.totalAmount.toFixed(2).replace('.', ',')} DPX
@@ -113,7 +113,7 @@ export default function SimulatorCard() {
         <button
           onClick={() => navigate('/login')}
           aria-label="Acessar plataforma"
-          className={`w-full py-3.5 text-sm font-bold rounded-xl
+          className={`w-full h-9 text-sm font-bold rounded-full
             bg-gradient-to-r from-bitcoin to-orange-500 text-black
             hover:shadow-lg hover:shadow-bitcoin/30 hover:-translate-y-0.5
             transition-all duration-200 ${focusRing}`}

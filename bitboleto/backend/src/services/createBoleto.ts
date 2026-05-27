@@ -7,6 +7,7 @@ import { env } from '../config/env';
 interface CreateBoletoInput {
   userId: string;
   barcode?: string;
+  digitableLine?: string; // linha digitável 47 dígitos
   pdfUrl?: string;
   pdfPassword?: string;
   amount: number;
@@ -108,7 +109,7 @@ export const createBoleto = async (
   req?: any // Request object para obter IP e device fingerprint
 ): Promise<CreateBoletoResult> => {
   try {
-    const { userId, barcode, pdfUrl, pdfPassword, amount, dueDate, couponCode, paymentCurrency: currency = 'DEPIX' } = input;
+    const { userId, barcode, digitableLine, pdfUrl, pdfPassword, amount, dueDate, couponCode, paymentCurrency: currency = 'DEPIX' } = input;
     
     // Obter IP e device fingerprint do request
     const userIp = req?.ip || req?.socket?.remoteAddress || 'unknown';
@@ -331,6 +332,7 @@ export const createBoleto = async (
     const boletoData: any = {
       userId,
       barcode: barcode || null,
+      digitableLine: digitableLine || null,
       pdfUrl: pdfUrl || null,
       pdfPassword: pdfPassword || null,
       amount,
@@ -425,7 +427,7 @@ export const createBoleto = async (
     }
 
     // ========================================
-    // 7. REGISTRAR LOG (fora da tx — não crítico)
+    // 6. REGISTRAR LOG (fora da tx — não crítico)
     // ========================================
     await prisma.log.create({
       data: {

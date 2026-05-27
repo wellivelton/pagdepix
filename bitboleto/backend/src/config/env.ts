@@ -15,6 +15,8 @@ export interface Env {
   VAPID_PUBLIC_KEY: string | undefined;
   VAPID_PRIVATE_KEY: string | undefined;
   SWAPVERSE_ACCESS_TOKEN: string | undefined;
+  SIDESHIFT_SECRET: string | undefined;
+  SIDESHIFT_AFFILIATE_ID: string | undefined;
   VELORA_API_KEY: string | undefined;
   VELORA_API_SECRET: string | undefined;
   TELEGRAM_ADMIN_CHAT_ID: string | undefined;
@@ -128,8 +130,10 @@ export function validateEnv(source: Record<string, string | undefined> = process
     RESEND_API_KEY:         opt('RESEND_API_KEY'),
     VAPID_PUBLIC_KEY:       opt('VAPID_PUBLIC_KEY'),
     VAPID_PRIVATE_KEY:      opt('VAPID_PRIVATE_KEY'),
-    SWAPVERSE_ACCESS_TOKEN: opt('SWAPVERSE_ACCESS_TOKEN'),
-    VELORA_API_KEY:         opt('VELORA_API_KEY'),
+    SWAPVERSE_ACCESS_TOKEN:  opt('SWAPVERSE_ACCESS_TOKEN'),
+    SIDESHIFT_SECRET:        opt('SIDESHIFT_SECRET'),
+    SIDESHIFT_AFFILIATE_ID:  opt('SIDESHIFT_AFFILIATE_ID'),
+    VELORA_API_KEY:          opt('VELORA_API_KEY'),
     VELORA_API_SECRET:      opt('VELORA_API_SECRET'),
     TELEGRAM_ADMIN_CHAT_ID: opt('TELEGRAM_ADMIN_CHAT_ID'),
   };
@@ -153,6 +157,7 @@ function logFeatureStatus(optional: Record<string, string | undefined>): void {
     { name: 'TELEGRAM_WEBHOOK_AUTH', enabled: !!optional['TELEGRAM_WEBHOOK_SECRET'],                                      reason: 'TELEGRAM_WEBHOOK_SECRET missing — webhook accepts any request' },
     { name: 'PUSH_NOTIFICATIONS',   enabled: !!(optional['VAPID_PUBLIC_KEY'] && optional['VAPID_PRIVATE_KEY']),           reason: 'VAPID_PUBLIC_KEY/PRIVATE_KEY missing' },
     { name: 'SWAP (SwapVerse)',      enabled: !!optional['SWAPVERSE_ACCESS_TOKEN'],                                        reason: 'SWAPVERSE_ACCESS_TOKEN missing' },
+    { name: 'SWAP (SideShift)',     enabled: !!(optional['SIDESHIFT_SECRET'] && optional['SIDESHIFT_AFFILIATE_ID']),       reason: 'SIDESHIFT_SECRET/AFFILIATE_ID missing' },
     { name: 'EMAIL (Resend)',        enabled: !!optional['RESEND_API_KEY'],                                                reason: 'RESEND_API_KEY missing' },
     { name: 'ASAAS',                enabled: !!optional['ASAAS_API_KEY'],                                                 reason: 'ASAAS_API_KEY missing' },
     { name: 'VELORA',               enabled: !!(optional['VELORA_API_KEY'] && optional['VELORA_API_SECRET']),             reason: 'VELORA_API_KEY/SECRET missing' },

@@ -275,6 +275,74 @@ export async function sendMarketplaceOrderPendingEmail(
 }
 
 /**
+ * Envia email com código de produto TopRecargas após entrega confirmada.
+ */
+export async function sendToprecargasCodeEmail(
+  to: string,
+  userName: string,
+  data: {
+    productName: string;
+    orderId: string;
+    codigo: string;
+    codigoMensagem: string | null;
+    totalAmount: number;
+  }
+): Promise<void> {
+  if (!isEmailConfigured() || !resend) {
+    console.warn('[Email] RESEND_API_KEY não definida. Email de código TopRecargas não enviado.', { to, orderId: data.orderId });
+    return;
+  }
+
+  const formattedAmount = new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+  }).format(data.totalAmount);
+
+  const instrucao = data.codigoMensagem
+    ? `<p style="color:#999;font-size:14px;margin-top:12px;">${data.codigoMensagem}</p>`
+    : '';
+
+  const { error } = await resend.emails.send({
+    from: FROM,
+    to,
+    subject: `PagDepix – Seu código chegou! 🎁`,
+    text: `Olá ${userName},\n\nSeu código chegou!\n\nProduto: ${data.productName}\nCódigo: ${data.codigo}${data.codigoMensagem ? `\n${data.codigoMensagem}` : ''}\n\nValor pago: ${formattedAmount}\nPedido: ${data.orderId.slice(0, 8).toUpperCase()}\n\nEm caso de dúvidas, acesse Minhas Compras na plataforma.\n\n— Equipe PagDepix`,
+    html: `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#1a1a1a;color:#fff;padding:24px;border-radius:8px;">
+        <div style="text-align:center;margin-bottom:24px;">
+          <h1 style="color:#f7931a;margin:0;">🎁 Seu código chegou!</h1>
+        </div>
+        <p style="font-size:16px;">Olá <strong>${userName}</strong>,</p>
+        <p style="font-size:16px;color:#999;">Produto: ${data.productName}</p>
+
+        <div style="background:#2a2a2a;border:1px solid #f7931a44;border-radius:8px;padding:20px;margin:24px 0;text-align:center;">
+          <p style="margin:0 0 8px;color:#999;font-size:12px;text-transform:uppercase;letter-spacing:2px;">Seu código</p>
+          <p style="margin:0;font-size:28px;font-weight:bold;letter-spacing:6px;color:#f7931a;font-family:monospace;">${data.codigo}</p>
+          ${instrucao}
+        </div>
+
+        <div style="background:#2a2a2a;padding:16px;border-radius:8px;">
+          <p style="margin:0 0 6px;color:#999;font-size:12px;text-transform:uppercase;">Valor pago</p>
+          <p style="margin:0;font-size:18px;font-weight:bold;color:#10b981;">${formattedAmount}</p>
+          <p style="margin:8px 0 0;color:#666;font-size:11px;">Pedido #${data.orderId.slice(0, 8).toUpperCase()}</p>
+        </div>
+
+        <p style="color:#666;font-size:12px;margin-top:24px;padding-top:16px;border-top:1px solid #333;">
+          Guarde este e-mail. Em caso de dúvidas, acesse <strong>Minhas Compras</strong> na plataforma para rever seu código.
+        </p>
+        <p style="color:#666;font-size:12px;">— Equipe PagDepix</p>
+      </div>
+    `,
+  });
+
+  if (error) {
+    console.error('[Email] Erro ao enviar código TopRecargas:', error);
+    throw error;
+  }
+}
+
+/**
  * Envia email de campanha com HTML completo.
  * Retorna true em caso de sucesso, false em caso de falha.
  */

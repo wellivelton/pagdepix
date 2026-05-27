@@ -28,12 +28,6 @@ async function checkVeloraBalance() {
     const balance = result.balance;
 
     if (balance < VELORA_LOW_BALANCE_THRESHOLD) {
-      notifyAdmin(
-        `⚠️ *Saldo Velora baixo!*\n` +
-        `💰 Saldo atual: R$ ${balance.toFixed(2)}\n` +
-        `🚨 Limite mínimo: R$ ${VELORA_LOW_BALANCE_THRESHOLD.toFixed(2)}\n` +
-        `Por favor, recarregue para continuar pagamentos automáticos.`
-      ).catch(() => {});
       console.warn(`[SyncLiquid] Velora balance low: R$${balance.toFixed(2)}`);
     }
   } catch { /* non-critical */ }
@@ -262,7 +256,7 @@ async function processPendingBoleto(boleto: {
     `💰 *Boleto recebido!* #${boleto.id.slice(0, 8)}\n` +
     `Moeda: ${boleto.paymentCurrency} · Valor: R$ ${boleto.totalAmount.toFixed(2)}\n` +
     `${boleto.barcode ? `Cód. barras: ${boleto.barcode.slice(0, 30)}...\n` : ''}` +
-    `TXID: ${txid}\nAprove e pague via Asaas no painel admin.`
+    `TXID: ${txid}\nAprove no painel admin → Pagar via RVHub (ou Asaas como fallback).`
   ).catch(() => {});
 }
 
@@ -311,6 +305,65 @@ async function processPendingBatch(batch: {
 }
 
 // ===================================================
+// Detectar pagamento de BillPayment via Esplora → aguardar aprovação admin
+// ===================================================
+async function processPendingBillPayment(bp: {
+  id: string;
+  walletAddress: string;
+  totalAmount: number;
+  cryptoAmount: string | null;
+  paymentCurrency: string;
+  liquidAddressIndex: number;
+  rateLockExpiresAt: Date | null;
+  digitableLine: string | null;
+  amount: number;
+}) {
+  const xpub = process.env.LIQUID_XPUB!;
+  const masterBlindingKey = process.env.LIQUID_MASTER_BLINDING_KEY!;
+  const { blindingPrivKey } = deriveLiquidAddressAndKey(xpub, masterBlindingKey, bp.liquidAddressIndex);
+
+  let assetId: string;
+  let expectedUnits: number;
+  try {
+    assetId = getAssetId(bp.paymentCurrency);
+    expectedUnits = computeExpectedUnits(bp.paymentCurrency, bp.totalAmount, bp.cryptoAmount);
+  } catch (err) {
+    console.error(`[SyncLiquid] BillPayment ${bp.id} unit compute error:`, err);
+    return;
+  }
+
+  const txid = await checkEsploraForAssetPayment(bp.walletAddress, expectedUnits, assetId, blindingPrivKey);
+  if (!txid) return;
+
+  console.log(`[SyncLiquid] BillPayment payment detected: ${bp.id}, txid: ${txid}`);
+
+  const updated = await (prisma as any).billPayment.updateMany({
+    where: { id: bp.id, status: 'PENDING' },
+    data: { txid },
+  });
+  if (updated.count === 0) return;
+
+  const hasRateLock = bp.paymentCurrency !== 'DEPIX' && bp.rateLockExpiresAt != null;
+  const rateLockExpired = hasRateLock && new Date() > new Date(bp.rateLockExpiresAt!);
+
+  if (rateLockExpired) {
+    await (prisma as any).billPayment.update({ where: { id: bp.id }, data: { rateExpired: true } }).catch(() => {});
+    notifyAdmin(
+      `⚠️ *Pagar Conta: pagamento detectado — cotação expirada* #${bp.id.slice(0, 8)}\n` +
+      `TXID registrado. Aprovar manualmente após validar cotação.`
+    ).catch(() => {});
+    return;
+  }
+
+  notifyAdmin(
+    `💰 *Pagar Conta recebido!* #${bp.id.slice(0, 8)}\n` +
+    `Moeda: ${bp.paymentCurrency} · Valor: R$ ${bp.totalAmount.toFixed(2)}\n` +
+    `${bp.digitableLine ? `Linha: ${bp.digitableLine.slice(0, 30)}...\n` : ''}` +
+    `TXID: ${txid}\nAprove no painel admin → Pagar Conta.`
+  ).catch(() => {});
+}
+
+// ===================================================
 // Detectar pagamento de Recarga via Esplora → auto-acionar Asaas
 // ===================================================
 async function processPendingRecharge(recharge: {
@@ -346,7 +399,7 @@ async function processPendingRecharge(recharge: {
 
   const updated = await (prisma as any).mobileRecharge.updateMany({
     where: { id: recharge.id, status: 'PENDING' },
-    data: { txid, status: 'PROCESSING' },
+    data: { txid },
   });
   if (updated.count === 0) return;
 
@@ -357,33 +410,152 @@ async function processPendingRecharge(recharge: {
     await (prisma as any).mobileRecharge.update({ where: { id: recharge.id }, data: { rateExpired: true } }).catch(() => {});
     notifyAdmin(
       `⚠️ *Recarga: pagamento detectado — cotação expirada* #${recharge.id.slice(0, 8)}\n` +
-      `TXID registrado. Aprovar manualmente.`
+      `📱 ${recharge.phoneNumber} · R$ ${recharge.amount.toFixed(2)} · ${recharge.operator}\n` +
+      `TXID: ${txid}\nAprovar manualmente no painel admin → Recargas.`
     ).catch(() => {});
     return;
   }
 
+  notifyAdmin(
+    `📱 *Pagamento de recarga detectado!* #${recharge.id.slice(0, 8)}\n` +
+    `${recharge.phoneNumber} · R$ ${recharge.amount.toFixed(2)} · ${recharge.operator}\n` +
+    `TXID: ${txid}\nAprovar no painel admin → Recargas → Aprovar via RV Hub.`
+  ).catch(() => {});
+}
+
+// ===================================================
+// Detectar pagamento de PinTopup via Esplora
+// ===================================================
+async function processPendingPinTopup(pin: {
+  id: string;
+  walletAddress: string;
+  totalAmount: number;
+  cryptoAmount: string | null;
+  paymentCurrency: string;
+  liquidAddressIndex: number;
+  rateLockExpiresAt: Date | null;
+  productName: string;
+  amount: number;
+}) {
+  const xpub = process.env.LIQUID_XPUB!;
+  const masterBlindingKey = process.env.LIQUID_MASTER_BLINDING_KEY!;
+  const { blindingPrivKey } = deriveLiquidAddressAndKey(xpub, masterBlindingKey, pin.liquidAddressIndex);
+
+  let assetId: string;
+  let expectedUnits: number;
   try {
-    const { asaasCreateRecharge } = await import('../services/asaas.service');
-    const asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
-    if (asaasResult.success) {
-      await (prisma as any).mobileRecharge.update({
-        where: { id: recharge.id },
-        data: { asaasRechargeId: asaasResult.id, asaasStatus: asaasResult.status },
-      }).catch(() => {});
-      notifyAdmin(
-        `✅ *Recarga disparada via Asaas* #${recharge.id.slice(0, 8)}\n` +
-        `📱 ${recharge.phoneNumber} · R$ ${recharge.amount.toFixed(2)}\n` +
-        `Operadora: ${recharge.operator} · Asaas ID: ${asaasResult.id}`
-      ).catch(() => {});
-    } else {
-      notifyAdmin(
-        `❌ *Falha Asaas (recarga)* #${recharge.id.slice(0, 8)}\n` +
-        `Erro: ${asaasResult.error}\nAprovar manualmente no painel.`
-      ).catch(() => {});
-    }
+    assetId = getAssetId(pin.paymentCurrency);
+    expectedUnits = computeExpectedUnits(pin.paymentCurrency, pin.totalAmount, pin.cryptoAmount);
   } catch (err) {
-    console.error(`[SyncLiquid] Asaas recharge failed for ${recharge.id}:`, err);
+    console.error(`[SyncLiquid] PinTopup ${pin.id} unit compute error:`, err);
+    return;
   }
+
+  const txid = await checkEsploraForAssetPayment(pin.walletAddress, expectedUnits, assetId, blindingPrivKey);
+  if (!txid) return;
+
+  console.log(`[SyncLiquid] PinTopup payment detected: ${pin.id}, txid: ${txid}`);
+
+  const updated = await (prisma as any).pinTopup.updateMany({
+    where: { id: pin.id, status: 'PENDING' },
+    data: { txid },
+  });
+  if (updated.count === 0) return;
+
+  notifyAdmin(
+    `🎁 *Pagamento de gift card detectado!* #${pin.id.slice(0, 8)}\n` +
+    `${pin.productName} · R$ ${pin.amount.toFixed(2)}\n` +
+    `TXID: ${txid}\nAprovar no painel admin → Gift Cards → Aprovar via RV Hub.`
+  ).catch(() => {});
+}
+
+// ===================================================
+// Detectar pagamento de TvTopup via Esplora
+// ===================================================
+async function processPendingTvTopup(tv: {
+  id: string;
+  walletAddress: string;
+  totalAmount: number;
+  cryptoAmount: string | null;
+  paymentCurrency: string;
+  liquidAddressIndex: number;
+  productName: string;
+  amount: number;
+}) {
+  const xpub = process.env.LIQUID_XPUB!;
+  const masterBlindingKey = process.env.LIQUID_MASTER_BLINDING_KEY!;
+  const { blindingPrivKey } = deriveLiquidAddressAndKey(xpub, masterBlindingKey, tv.liquidAddressIndex);
+
+  let assetId: string;
+  let expectedUnits: number;
+  try {
+    assetId = getAssetId(tv.paymentCurrency);
+    expectedUnits = computeExpectedUnits(tv.paymentCurrency, tv.totalAmount, tv.cryptoAmount);
+  } catch (err) {
+    console.error(`[SyncLiquid] TvTopup ${tv.id} unit compute error:`, err);
+    return;
+  }
+
+  const txid = await checkEsploraForAssetPayment(tv.walletAddress, expectedUnits, assetId, blindingPrivKey);
+  if (!txid) return;
+
+  console.log(`[SyncLiquid] TvTopup payment detected: ${tv.id}, txid: ${txid}`);
+
+  const updated = await (prisma as any).tvTopup.updateMany({
+    where: { id: tv.id, status: 'PENDING' },
+    data: { txid },
+  });
+  if (updated.count === 0) return;
+
+  notifyAdmin(
+    `📺 *Pagamento de recarga TV detectado!* #${tv.id.slice(0, 8)}\n` +
+    `${tv.productName} · R$ ${tv.amount.toFixed(2)}\n` +
+    `TXID: ${txid}\nAprovar no painel admin → TV → Aprovar via RV Hub.`
+  ).catch(() => {});
+}
+
+// ===================================================
+// Detectar pagamento de ToprecargasOrder via Esplora
+// ===================================================
+async function processPendingToprecargasOrder(order: {
+  id: string;
+  walletAddress: string;
+  totalAmount: number;
+  cryptoAmount: string | null;
+  paymentCurrency: string;
+  liquidAddressIndex: number;
+  productName: string;
+}) {
+  const xpub = process.env.LIQUID_XPUB!;
+  const masterBlindingKey = process.env.LIQUID_MASTER_BLINDING_KEY!;
+  const { blindingPrivKey } = deriveLiquidAddressAndKey(xpub, masterBlindingKey, order.liquidAddressIndex);
+
+  let assetId: string;
+  let expectedUnits: number;
+  try {
+    assetId = getAssetId(order.paymentCurrency);
+    expectedUnits = computeExpectedUnits(order.paymentCurrency, order.totalAmount, order.cryptoAmount);
+  } catch (err) {
+    console.error(`[SyncLiquid] ToprecargasOrder ${order.id} unit compute error:`, err);
+    return;
+  }
+
+  const txid = await checkEsploraForAssetPayment(order.walletAddress, expectedUnits, assetId, blindingPrivKey);
+  if (!txid) return;
+
+  console.log(`[SyncLiquid] ToprecargasOrder payment detected: ${order.id}, txid: ${txid}`);
+
+  const updated = await prisma.toprecargasOrder.updateMany({
+    where: { id: order.id, status: 'PENDING' },
+    data: { txid, status: 'PROCESSING', paidAt: new Date() },
+  });
+  if (updated.count === 0) return;
+
+  // Entrega automática do código via B2B
+  const { deliverToprecargasCode } = require('../services/toprecargasService');
+  deliverToprecargasCode(order.id).catch((err: any) => {
+    console.error(`[SyncLiquid] ToprecargasOrder delivery error ${order.id}:`, err);
+  });
 }
 
 async function runSync() {
@@ -470,10 +642,85 @@ async function runSync() {
     orderBy: { createdAt: 'asc' },
   });
 
-  const total = pccOrders.length + boletoOrders.length + batchOrders.length + rechargeOrders.length;
+  // 4e. PinTopup (com liquidAddressIndex)
+  const pinTopupOrders = (prisma as any).pinTopup
+    ? await (prisma as any).pinTopup.findMany({
+        where: {
+          status: 'PENDING',
+          paymentCurrency: { in: supportedCurrencies },
+          liquidAddressIndex: { not: null },
+          txid: null,
+          createdAt: { gte: cutoff },
+        },
+        select: {
+          id: true, walletAddress: true, totalAmount: true, cryptoAmount: true,
+          paymentCurrency: true, liquidAddressIndex: true, rateLockExpiresAt: true,
+          productName: true, amount: true,
+        },
+        take: 50,
+        orderBy: { createdAt: 'asc' },
+      })
+    : [];
+
+  // 4f. TvTopup (com liquidAddressIndex)
+  const tvTopupOrders = (prisma as any).tvTopup
+    ? await (prisma as any).tvTopup.findMany({
+        where: {
+          status: 'PENDING',
+          paymentCurrency: { in: supportedCurrencies },
+          liquidAddressIndex: { not: null },
+          txid: null,
+          createdAt: { gte: cutoff },
+        },
+        select: {
+          id: true, walletAddress: true, totalAmount: true, cryptoAmount: true,
+          paymentCurrency: true, liquidAddressIndex: true,
+          productName: true, amount: true,
+        },
+        take: 50,
+        orderBy: { createdAt: 'asc' },
+      })
+    : [];
+
+  // 4g. BillPayment (com liquidAddressIndex)
+  const billPaymentOrders = await (prisma as any).billPayment.findMany({
+    where: {
+      status: 'PENDING',
+      paymentCurrency: { in: supportedCurrencies },
+      liquidAddressIndex: { not: null },
+      txid: null,
+      createdAt: { gte: cutoff },
+    },
+    select: {
+      id: true, walletAddress: true, totalAmount: true, cryptoAmount: true,
+      paymentCurrency: true, liquidAddressIndex: true, rateLockExpiresAt: true,
+      digitableLine: true, amount: true,
+    },
+    take: 50,
+    orderBy: { createdAt: 'asc' },
+  });
+
+  // 4h. ToprecargasOrder
+  const toprecargasOrders = await prisma.toprecargasOrder.findMany({
+    where: {
+      status: 'PENDING',
+      paymentCurrency: { in: supportedCurrencies as any },
+      liquidAddressIndex: { not: null },
+      txid: null,
+      createdAt: { gte: cutoff },
+    },
+    select: {
+      id: true, walletAddress: true, totalAmount: true, cryptoAmount: true,
+      paymentCurrency: true, liquidAddressIndex: true, productName: true,
+    },
+    take: 50,
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const total = pccOrders.length + boletoOrders.length + batchOrders.length + rechargeOrders.length + pinTopupOrders.length + tvTopupOrders.length + billPaymentOrders.length + toprecargasOrders.length;
   if (total === 0) return;
 
-  console.log(`[SyncLiquid] Checking via Esplora: PCC=${pccOrders.length} Boleto=${boletoOrders.length} Batch=${batchOrders.length} Recharge=${rechargeOrders.length}`);
+  console.log(`[SyncLiquid] Checking via Esplora: PCC=${pccOrders.length} Boleto=${boletoOrders.length} Batch=${batchOrders.length} Recharge=${rechargeOrders.length} PinTopup=${pinTopupOrders.length} TvTopup=${tvTopupOrders.length} BillPayment=${billPaymentOrders.length} Toprecargas=${toprecargasOrders.length}`);
 
   for (const order of pccOrders) {
     try { await processPendingOrder(order); } catch (err) {
@@ -495,6 +742,26 @@ async function runSync() {
   for (const recharge of rechargeOrders) {
     try { await processPendingRecharge(recharge); } catch (err) {
       console.error(`[SyncLiquid] Recharge ${recharge.id}:`, err);
+    }
+  }
+  for (const pin of pinTopupOrders) {
+    try { await processPendingPinTopup(pin); } catch (err) {
+      console.error(`[SyncLiquid] PinTopup ${pin.id}:`, err);
+    }
+  }
+  for (const tv of tvTopupOrders) {
+    try { await processPendingTvTopup(tv); } catch (err) {
+      console.error(`[SyncLiquid] TvTopup ${tv.id}:`, err);
+    }
+  }
+  for (const bp of billPaymentOrders) {
+    try { await processPendingBillPayment(bp); } catch (err) {
+      console.error(`[SyncLiquid] BillPayment ${bp.id}:`, err);
+    }
+  }
+  for (const tr of toprecargasOrders) {
+    try { await processPendingToprecargasOrder(tr as any); } catch (err) {
+      console.error(`[SyncLiquid] ToprecargasOrder ${tr.id}:`, err);
     }
   }
 }

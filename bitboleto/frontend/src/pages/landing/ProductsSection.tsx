@@ -47,22 +47,22 @@ export default function ProductsSection() {
   ];
 
   return (
-    <section id="servicos" className="py-12 md:py-20 lg:py-28">
+    <section id="servicos" className="py-8 md:py-12">
       <div className="max-w-7xl mx-auto px-4 md:px-6">
-        <div className="text-center mb-8 md:mb-14">
+        <div className="text-center mb-5 md:mb-8">
           <SectionLabel>Produtos</SectionLabel>
-          <h2 className="text-2xl md:text-4xl lg:text-5xl font-black text-white">
+          <h2 className="text-xl md:text-2xl font-black text-white">
             Tudo que você precisa{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-bitcoin to-orange-400">
               em um só lugar
             </span>
           </h2>
-          <p className="text-gray-400 text-sm md:text-base mt-3 md:mt-4 max-w-2xl mx-auto">
+          <p className="text-gray-400 text-sm mt-2 max-w-2xl mx-auto">
             Boletos, recargas, marketplace e programa de afiliados — todos pagos com Depix, L-USDT ou L-BTC.
           </p>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {products.map((p) => (
             <ProductCard
               key={p.title}

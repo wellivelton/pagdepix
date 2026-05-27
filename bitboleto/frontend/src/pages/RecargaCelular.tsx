@@ -72,11 +72,10 @@ interface Operator {
 }
 
 const FALLBACK_OPERATORS: Operator[] = [
-  { id: 'Vivo', name: 'Vivo', values: [20, 25, 30, 35, 40, 50, 100, 200, 300] },
-  { id: 'Claro', name: 'Claro', values: [20, 25, 30, 35, 40, 50, 100, 200, 300] },
-  { id: 'TIM', name: 'TIM', values: [20, 30, 40, 50, 60, 100] },
-  { id: 'Correios Celular', name: 'Correios Celular', values: [20, 30, 45, 55, 75, 120, 150, 180, 225] },
-  { id: 'Surf Telecom', name: 'Surf Telecom', values: [25, 30, 40, 50, 75, 180] },
+  { id: 'Vivo',  name: 'Vivo',  values: [10, 15, 20, 30] },
+  { id: 'Claro', name: 'Claro', values: [10, 13, 20, 30] },
+  { id: 'Oi',    name: 'Oi',    values: [10, 14, 15, 20] },
+  { id: 'TIM',   name: 'TIM',   values: [10, 15, 20, 30] },
 ];
 
 function formatPhoneDisplay(digits: string): string {
@@ -99,6 +98,8 @@ function localRechargeCalc(amount: number): { fee: number; totalAmount: number; 
   const totalAmount = Math.ceil((amount + fee) * 100) / 100;
   return { fee, totalAmount, depixAmount: totalAmount };
 }
+
+const MIN_RECHARGE_AMOUNT = 10;
 
 export default function RecargaCelular() {
   const { triggerPushActivation } = useNotifications();
@@ -131,8 +132,7 @@ export default function RecargaCelular() {
   } | null>(null);
   const [paymentCurrency, setPaymentCurrency] = useState<Currency>('DEPIX');
   const [couponError, setCouponError] = useState('');
-  const [asaasProvider, setAsaasProvider] = useState<{ name: string; values: Array<{ name: string; amount: number; bonus: string }> } | null>(null);
-  const [providerLoading, setProviderLoading] = useState(false);
+  const providerLoading = false;
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [applyingCoupon, setApplyingCoupon] = useState(false);
   const [referralAutoApplied, setReferralAutoApplied] = useState(false);
@@ -187,7 +187,7 @@ export default function RecargaCelular() {
   }, []);
 
   const fetchPreview = (couponToUse?: string | null, onError?: (msg: string) => void) => {
-    if (numAmount < 20 || !selectedOperator?.values?.includes(numAmount)) return;
+    if (numAmount < MIN_RECHARGE_AMOUNT || !selectedOperator?.values?.includes(numAmount)) return;
     const coupon = couponToUse ?? appliedCoupon;
     const requestKey = `${numAmount}-${coupon || ''}-${paymentCurrency}`;
     calcRequestRef.current = requestKey;
@@ -225,7 +225,7 @@ export default function RecargaCelular() {
   };
 
   useEffect(() => {
-    if (numAmount < 20 || !selectedOperator?.values?.includes(numAmount)) {
+    if (numAmount < MIN_RECHARGE_AMOUNT || !selectedOperator?.values?.includes(numAmount)) {
       setPreviewCalc(null);
       setCouponError('');
       return;
@@ -240,7 +240,7 @@ export default function RecargaCelular() {
       setCouponError('Digite o código do cupom.');
       return;
     }
-    if (numAmount < 20 || !selectedOperator?.values?.includes(numAmount)) {
+    if (numAmount < MIN_RECHARGE_AMOUNT || !selectedOperator?.values?.includes(numAmount)) {
       setCouponError('Selecione operadora e valor antes de aplicar o cupom.');
       return;
     }
@@ -288,7 +288,7 @@ export default function RecargaCelular() {
 
   useEffect(() => {
     if (step !== 2) return;
-    if (numAmount < 20 || !selectedOperator?.values?.includes(numAmount)) return;
+    if (numAmount < MIN_RECHARGE_AMOUNT || !selectedOperator?.values?.includes(numAmount)) return;
     let cancelled = false;
     const coupon = appliedCoupon?.trim();
     const requestKey = `${numAmount}-${coupon || ''}-${paymentCurrency}`;
@@ -326,32 +326,6 @@ export default function RecargaCelular() {
     setError('');
   };
 
-  useEffect(() => {
-    const ddd = parseInt(phoneDigits.slice(0, 2), 10);
-    if (phoneDigits.length !== 11 || phoneDigits[2] !== '9' || !VALID_DDDS.has(ddd)) {
-      setAsaasProvider(null);
-      return;
-    }
-    let cancelled = false;
-    setProviderLoading(true);
-    api.get(`/recharge/provider/${phoneDigits}`)
-      .then(({ data }) => {
-        if (cancelled) return;
-        if (data.name && Array.isArray(data.values) && data.values.length > 0) {
-          setAsaasProvider(data);
-          const match = operators.find(op =>
-            op.name.toLowerCase() === data.name.toLowerCase() || op.id.toLowerCase() === data.name.toLowerCase()
-          );
-          setOperatorId(match ? match.id : data.name);
-          setAmount('');
-        } else {
-          setAsaasProvider(null);
-        }
-      })
-      .catch(() => { if (!cancelled) setAsaasProvider(null); })
-      .finally(() => { if (!cancelled) setProviderLoading(false); });
-    return () => { cancelled = true; };
-  }, [phoneDigits, operators]);
 
   const goToResumo = () => {
     setError('');
@@ -365,7 +339,7 @@ export default function RecargaCelular() {
       return;
     }
     const numAmt = Number(amount);
-    if (!asaasProvider && selectedOperator && !selectedOperator.values.includes(numAmt)) {
+    if (selectedOperator && !selectedOperator.values.includes(numAmt)) {
       setError('Selecione um valor válido para a operadora.');
       return;
     }
@@ -384,7 +358,7 @@ export default function RecargaCelular() {
       return;
     }
     const numAmt = Number(amount);
-    if (!asaasProvider && selectedOperator && !selectedOperator.values.includes(numAmt)) {
+    if (selectedOperator && !selectedOperator.values.includes(numAmt)) {
       setError('Selecione um valor válido para a operadora.');
       return;
     }
@@ -533,54 +507,51 @@ export default function RecargaCelular() {
                   placeholder="11 98765-4321"
                   className="flex-1 min-w-0 px-2 py-2 bg-transparent text-white text-sm outline-none placeholder-gray-500"
                 />
-                {providerLoading && <Loader2 className="w-3.5 h-3.5 text-bitcoin animate-spin mr-2.5 shrink-0" />}
               </div>
-              <p className="text-[10px] text-gray-500 mt-0.5">DDD + 9 dígitos — operadora detectada automaticamente</p>
+              <p className="text-[10px] text-gray-500 mt-0.5">DDD + 9 dígitos (ex: 11 98765-4321)</p>
             </div>
 
             {/* Operadora */}
-            {asaasProvider ? (
-              <div className="flex items-center gap-2 px-3 py-2 bg-bitcoin/10 border border-bitcoin/30 rounded-lg">
-                <Smartphone className="w-3.5 h-3.5 text-bitcoin shrink-0" />
-                <span className="text-xs text-gray-300">Operadora:</span>
-                <span className="text-xs font-bold text-bitcoin">{asaasProvider.name}</span>
-                <button type="button" onClick={() => { setAsaasProvider(null); setOperatorId(''); setAmount(''); }} className="ml-auto text-gray-500 hover:text-gray-300">
-                  <X className="w-3.5 h-3.5" />
-                </button>
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1">Operadora</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {operators.map((op) => (
+                  <button
+                    key={op.id}
+                    type="button"
+                    onClick={() => { setOperatorId(op.id); setAmount(''); }}
+                    className={`py-2 px-1.5 rounded-lg border transition-all flex items-center justify-center ${operatorId === op.id ? 'border-bitcoin ring-2 ring-bitcoin/40 bg-gray-900' : 'border-gray-600 bg-gray-900/50 hover:border-gray-500'}`}
+                  >
+                    <img
+                      src={`/operators/${op.id.toLowerCase()}.svg`}
+                      alt={op.name}
+                      className="h-7 w-full object-contain"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; (e.currentTarget.nextElementSibling as HTMLElement).style.display = 'block'; }}
+                    />
+                    <span className="text-xs font-bold text-white hidden">{op.name}</span>
+                  </button>
+                ))}
               </div>
-            ) : phoneDigits.length === 11 && !providerLoading ? (
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">Operadora</label>
-                <select value={operatorId} onChange={(e) => { setOperatorId(e.target.value); setAmount(''); }} className={`${inputClass} ${focusRing}`}>
-                  <option value="">Selecione</option>
-                  {operators.map((op) => <option key={op.id} value={op.id}>{op.name}</option>)}
-                </select>
-              </div>
-            ) : null}
+            </div>
 
             {/* Valores */}
-            {asaasProvider && asaasProvider.values.length > 0 ? (
+            {selectedOperator && (
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1">Valor da recarga</label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {asaasProvider.values.map((v) => (
-                    <button key={v.amount} type="button" onClick={() => setAmount(v.amount)}
-                      className={`py-2 px-1.5 rounded-lg border text-xs font-semibold transition-all ${amount === v.amount ? 'bg-bitcoin border-bitcoin text-black' : 'bg-gray-900/50 border-gray-600 text-white hover:border-bitcoin/60'}`}>
-                      <div>{v.name}</div>
-                      {v.bonus && v.bonus !== '0.0' && <div className="text-[10px] font-normal mt-0.5 opacity-70">+{v.bonus}%</div>}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {selectedOperator.values.map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setAmount(v)}
+                      className={`py-2 px-1.5 rounded-lg border text-xs font-semibold transition-all ${amount === v ? 'bg-bitcoin border-bitcoin text-black' : 'bg-gray-900/50 border-gray-600 text-white hover:border-bitcoin/60'}`}
+                    >
+                      R$ {v}
                     </button>
                   ))}
                 </div>
               </div>
-            ) : !asaasProvider && selectedOperator ? (
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">Valor (R$)</label>
-                <select value={amount === '' ? '' : amount} onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : '')} className={`${inputClass} ${focusRing}`}>
-                  <option value="">Selecione</option>
-                  {selectedOperator.values.map((v) => <option key={v} value={v}>R$ {v.toFixed(2).replace('.', ',')}</option>)}
-                </select>
-              </div>
-            ) : null}
+            )}
 
             <CurrencySelector value={paymentCurrency} onChange={setPaymentCurrency} />
 
@@ -616,7 +587,7 @@ export default function RecargaCelular() {
               )}
             </div>
 
-            {previewCalc && numAmount >= 20 && (
+            {previewCalc && numAmount >= MIN_RECHARGE_AMOUNT && (
               <div className="p-2.5 bg-bitcoin/10 border border-bitcoin/30 rounded-lg text-[11px] text-gray-300 space-y-1">
                 {previewCalc.cupomValido ? (
                   (() => {

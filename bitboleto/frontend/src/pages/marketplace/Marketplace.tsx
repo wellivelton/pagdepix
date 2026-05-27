@@ -1,32 +1,35 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { ProductCard } from '../../components/marketplace/ProductCard';
 import api from '../../services/api';
 import {
   Search, Filter, ShoppingBag, ChevronLeft, ChevronRight, Sparkles,
   Gift, Tv2, Loader2, Copy, Check, Clock, AlertCircle,
-  ChevronRight as ChevronRightIcon,
+  ChevronRight as ChevronRightIcon, ChevronDown, Info, BookOpen,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CATEGORY_LABELS } from '../../constants/productForm';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { CurrencySelector, type Currency } from '../../components/CurrencySelector';
+function getKindLabel(_kind: string): string { return _kind; }
+function getKindConfig(_kind: string) { return { hasTransactionFlow: false as const, createUrl: null as string | null, pollUrl: null as string | null }; }
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
-
-type RvHubType = 'pin' | 'tv';
 
 interface RvHubProduct {
   productId: string;
   name: string;
+  kind: string;
   brand?: string;
   provider?: string;
   amount: number;
-  category: string;
   variable?: boolean;
   minAmount?: number;
   maxAmount?: number;
   expiresInDays?: number;
+  terms?: string;
+  redemptionInstructions?: string;
+  howToUse?: string;
 }
 
 interface RvHubOrder {
@@ -48,19 +51,34 @@ interface RvHubOrder {
 
 // ── Visuais de marca ───────────────────────────────────────────────────────────
 
+// Aliases: normaliza nomes de provider da API para chaves canônicas de display
+const BRAND_ALIAS: Record<string, string> = {
+  'Xbox Card':       'Xbox',
+  'Google Variavel': 'Google Play',
+  'Claro Tv':        'Claro TV',
+  'Oi Tv':           'Oi TV',
+};
+
+function normalizeBrand(brand: string): string {
+  return BRAND_ALIAS[brand] ?? brand;
+}
+
 const BRAND_BG: Record<string, string> = {
-  'Google Play': 'from-[#01875f] to-[#34a853]',
-  'Netflix':     'from-[#831010] to-[#E50914]',
-  'Xbox':        'from-[#0a4f0a] to-[#107C10]',
-  'Level Up':    'from-[#cc4400] to-[#FF6600]',
-  'PaySafeCard': 'from-[#003087] to-[#0070e0]',
-  'SKY':         'from-[#0a1520] to-[#1a3a5c]',
-  'OI TV':       'from-[#b89a00] to-[#FFD400]',
-  'CLARO TV':    'from-[#9a0008] to-[#E3000F]',
+  'Google Play':      'from-[#001a0f] to-[#013d20]',
+  'Netflix':          'from-[#1a0000] to-[#4a0000]',
+  'Xbox':             'from-[#011001] to-[#032003]',
+  'Level Up':         'from-[#2a0e00] to-[#6b2200]',
+  'Paysafecard':      'from-[#000d24] to-[#001a4a]',
+  'Sky':              'from-[#03060a] to-[#071525]',
+  'Oi TV':            'from-[#2a2000] to-[#5a4400]',
+  'Claro TV':         'from-[#1a0000] to-[#4a0003]',
+  'League Of Legends':'from-[#050d1a] to-[#0a1f3d]',
+  'Minecoins':        'from-[#1a2e0d] to-[#2d5218]',
+  'Razer Gold':       'from-[#0a1a0a] to-[#1a3a0a]',
 };
 
 const BRAND_TEXT: Record<string, string> = {
-  'OI TV': 'text-gray-900',
+  'Oi TV': 'text-yellow-300',
 };
 
 const BRAND_LOGO: Record<string, string> = {
@@ -68,17 +86,18 @@ const BRAND_LOGO: Record<string, string> = {
   'Netflix':     '/brands/netflix.svg',
   'Xbox':        '/brands/xbox.svg',
   'Level Up':    '/brands/level-up.svg',
-  'SKY':         '/brands/sky.svg',
-  'OI TV':       '/brands/oi-tv.svg',
-  'CLARO TV':    '/brands/claro-tv.svg',
+  'Sky':         '/brands/sky.svg',
+  'Oi TV':       '/brands/oi-tv.svg',
+  'Claro TV':    '/brands/claro-tv.svg',
 };
 
-// Categorias RV Hub mapeadas para exibição e dropdown unificado
-const RVHUB_CAT_LABELS: Record<string, string> = {
-  games:     'Games',
-  streaming: 'Streaming',
-  tv:        'TV',
-};
+function getBrandBg(brand: string): string {
+  return BRAND_BG[normalizeBrand(brand)] ?? 'from-gray-700 to-gray-600';
+}
+
+function getBrandLogo(brand: string): string | null {
+  return BRAND_LOGO[normalizeBrand(brand)] ?? null;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -86,7 +105,7 @@ function calcFee(amount: number) {
   return Math.ceil((amount * 0.02 + 0.99) * 100) / 100;
 }
 
-// ── RvHubBrandCard — um card por marca, pills de valor internos ───────────────
+// ── RvHubBrandCard ─────────────────────────────────────────────────────────────
 
 function RvHubBrandCard({
   brandKey,
@@ -94,8 +113,8 @@ function RvHubBrandCard({
   onSelect,
 }: {
   brandKey: string;
-  prods: Array<RvHubProduct & { _type: RvHubType }>;
-  onSelect: (p: RvHubProduct & { _type: RvHubType }, varAmount?: number) => void;
+  prods: Array<RvHubProduct & { _kind: string }>;
+  onSelect: (p: RvHubProduct & { _kind: string }, varAmount?: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [freeValue, setFreeValue] = useState('');
@@ -112,23 +131,23 @@ function RvHubBrandCard({
     && freeNum >= (varProd?.minAmount ?? 0)
     && freeNum <= (varProd?.maxAmount ?? Infinity);
 
-  // Expiração: pegar do primeiro produto (TV)
   const expiresInDays = prods[0]?.expiresInDays;
+  const kindLabel = getKindLabel(prods[0]?._kind ?? '');
+  const hasFlow   = getKindConfig(prods[0]?._kind ?? '').hasTransactionFlow;
 
   return (
-    <div className="bg-gray-800/50 backdrop-blur rounded-xl border border-gray-700/50 hover:border-gray-600/60 transition overflow-hidden flex flex-col">
-      {/* Área de imagem — gradiente da marca + logo */}
+    <div className={`bg-gray-800/50 backdrop-blur rounded-xl border transition overflow-hidden flex flex-col ${hasFlow ? 'border-gray-700/50 hover:border-gray-600/60' : 'border-gray-700/30 opacity-75'}`}>
       <div
-        className={`aspect-[3/2] bg-gradient-to-br ${BRAND_BG[brandKey] ?? 'from-gray-700 to-gray-600'} flex items-center justify-center relative overflow-hidden flex-shrink-0`}
+        className={`aspect-[3/2] bg-gradient-to-br ${getBrandBg(brandKey)} flex items-center justify-center relative overflow-hidden flex-shrink-0`}
       >
-        {BRAND_LOGO[brandKey] ? (
+        {getBrandLogo(brandKey) ? (
           <img
-            src={BRAND_LOGO[brandKey]}
+            src={getBrandLogo(brandKey)!}
             alt={brandKey}
             className="w-1/2 object-contain drop-shadow-lg"
           />
         ) : (
-          <span className={`font-bold text-lg px-2 text-center ${BRAND_TEXT[brandKey] ?? 'text-white'}`}>
+          <span className="font-bold text-lg px-2 text-center text-white">
             {brandKey}
           </span>
         )}
@@ -137,23 +156,31 @@ function RvHubBrandCard({
             {expiresInDays}d
           </div>
         )}
+        {!hasFlow && (
+          <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-center py-1">
+            <span className="text-[10px] font-medium text-gray-300 tracking-wide uppercase">Em breve</span>
+          </div>
+        )}
       </div>
 
-      {/* Corpo */}
       <div className="p-3 flex flex-col gap-2 flex-1">
         <div>
           <h3 className="text-sm font-semibold text-white leading-snug truncate">{brandKey}</h3>
-          <p className="text-[11px] text-gray-400">{RVHUB_CAT_LABELS[prods[0]?.category] ?? prods[0]?.category}</p>
+          <p className="text-[11px] text-gray-400">{kindLabel}</p>
         </div>
 
-        {/* Pills de valor fixo */}
         {fixedProds.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {visible.map((p) => (
               <button
                 key={p.productId}
-                onClick={() => onSelect(p)}
-                className="px-2 py-0.5 rounded-full bg-gray-700/80 border border-gray-600/60 text-[11px] font-medium text-gray-200 hover:border-bitcoin/70 hover:text-bitcoin transition-all"
+                onClick={() => hasFlow && onSelect(p)}
+                disabled={!hasFlow}
+                className={`px-2 py-0.5 rounded-full border text-[11px] font-medium transition-all ${
+                  hasFlow
+                    ? 'bg-gray-700/80 border-gray-600/60 text-gray-200 hover:border-bitcoin/70 hover:text-bitcoin cursor-pointer'
+                    : 'bg-gray-700/40 border-gray-600/30 text-gray-500 cursor-not-allowed'
+                }`}
               >
                 R${p.amount % 1 === 0 ? p.amount.toFixed(0) : p.amount.toFixed(2)}
               </button>
@@ -169,8 +196,7 @@ function RvHubBrandCard({
           </div>
         )}
 
-        {/* Input de valor livre */}
-        {varProd && (
+        {varProd && hasFlow && (
           <div className="space-y-1">
             <p className="text-[10px] text-gray-500">R$ {varProd.minAmount} – R$ {varProd.maxAmount}</p>
             <div className="flex gap-1">
@@ -202,6 +228,40 @@ function RvHubBrandCard({
   );
 }
 
+// ── Subcomponentes de checkout ──────────────────────────────────────────────────
+
+function RedemptionInfo({ label, icon, text }: { label: string; icon: React.ReactNode; text: string }) {
+  return (
+    <div className="bg-gray-900/50 border border-gray-700/50 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        {icon}
+        <p className="text-xs font-semibold text-gray-300">{label}</p>
+      </div>
+      <p className="text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">{text}</p>
+    </div>
+  );
+}
+
+function TermsBox({ terms }: { terms: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-gray-900/50 border border-gray-700/50 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <p className="text-xs font-semibold text-gray-400">Termos de uso</p>
+        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-gray-700/40 pt-3">
+          <p className="text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">{terms}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Marketplace unificado ──────────────────────────────────────────────────────
 
 export default function Marketplace() {
@@ -209,26 +269,25 @@ export default function Marketplace() {
   const navigate = useNavigate();
 
   // ── Dados ──────────────────────────────────────────────────────────────────
-  const [pinProducts, setPinProducts]   = useState<RvHubProduct[]>([]);
-  const [tvProducts, setTvProducts]     = useState<RvHubProduct[]>([]);
-  const [rvLoading, setRvLoading]       = useState(true);
+  const [productsByKind, setProductsByKind] = useState<Record<string, RvHubProduct[]>>({});
+  const [rvLoading, setRvLoading]           = useState(true);
 
-  const [sellerProducts, setSellerProducts]   = useState<any[]>([]);
+  const [sellerProducts, setSellerProducts]     = useState<any[]>([]);
   const [sellerCategories, setSellerCategories] = useState<Array<{ id: string; name: string; slug: string }>>([]);
   const [sellerLoading, setSellerLoading]       = useState(true);
   const [pagination, setPagination]             = useState({ page: 1, pages: 1, total: 0 });
 
   // ── Filtros ────────────────────────────────────────────────────────────────
-  const [search, setSearch]   = useState('');
-  const [category, setCategory] = useState('');
-  const [sort, setSort]         = useState('newest');
-  const [page, setPage]         = useState(1);
+  const [search, setSearch]       = useState('');
+  const [category, setCategory]   = useState('');
+  const [sort, setSort]           = useState('newest');
+  const [page, setPage]           = useState(1);
   const [debSearch, setDebSearch] = useState('');
 
   // ── Fluxo de compra RV Hub ─────────────────────────────────────────────────
-  const [step, setStep]                       = useState(0); // 0=browse, 1=resumo, 2=pagamento
-  const [selected, setSelected]               = useState<(RvHubProduct & { _type: RvHubType }) | null>(null);
-  const [selectedType, setSelectedType]       = useState<RvHubType>('pin');
+  const [step, setStep]                       = useState(0);
+  const [selected, setSelected]               = useState<(RvHubProduct & { _kind: string }) | null>(null);
+  const [selectedKind, setSelectedKind]       = useState('');
   const [customAmount, setCustomAmount]       = useState<number | ''>('');
   const [paymentCurrency, setPaymentCurrency] = useState<Currency>('DEPIX');
   const [buying, setBuying]                   = useState(false);
@@ -239,15 +298,12 @@ export default function Marketplace() {
   const [copiedPin, setCopiedPin]             = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Fetch RV Hub ───────────────────────────────────────────────────────────
+  // ── Fetch RV Hub (catálogo genérico) ───────────────────────────────────────
   useEffect(() => {
-    Promise.all([
-      api.get('/pin/products').then(({ data }) => data.products ?? []).catch(() => []),
-      api.get('/tv/products').then(({ data }) => data.products ?? []).catch(() => []),
-    ]).then(([pin, tv]) => {
-      setPinProducts(pin);
-      setTvProducts(tv);
-    }).finally(() => setRvLoading(false));
+    api.get('/catalog/products')
+      .then(({ data }) => setProductsByKind(data.byKind ?? {}))
+      .catch(() => setProductsByKind({}))
+      .finally(() => setRvLoading(false));
   }, []);
 
   // ── Fetch categorias de vendedores ─────────────────────────────────────────
@@ -264,18 +320,17 @@ export default function Marketplace() {
   }, [search]);
 
   // ── Fetch produtos de vendedores ───────────────────────────────────────────
+  const rvHubKinds = Object.keys(productsByKind);
+
   useEffect(() => {
     setSellerLoading(true);
     const params: any = { page, limit: 20, sort };
     if (debSearch) params.search = debSearch;
     if (category) {
-      // Categoria RV Hub pura: não filtra servidor (já filtramos client-side)
-      // Categoria de vendedor: filtra no servidor
-      if (!RVHUB_CAT_LABELS[category]) {
+      if (!rvHubKinds.includes(category)) {
         if (sellerCategories.some((c) => c.id === category)) params.categoryId = category;
         else params.category = category;
       } else {
-        // categoria RV Hub → filtra vendedores por mesmo slug, se houver
         params.category = category;
       }
     }
@@ -286,19 +341,21 @@ export default function Marketplace() {
       })
       .catch(() => setSellerProducts([]))
       .finally(() => setSellerLoading(false));
-  }, [page, debSearch, category, sellerCategories, sort]);
+  }, [page, debSearch, category, sellerCategories, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Polling pagamento (step 2) ─────────────────────────────────────────────
   useEffect(() => {
     if (step !== 2 || !order?.id || paymentDetected) return;
-    const endpoint = selectedType === 'pin' ? `/pin/${order.id}` : `/tv/${order.id}`;
+    const kindCfg = getKindConfig(selectedKind);
+    if (!kindCfg.pollUrl) return;
+    const endpoint = `${kindCfg.pollUrl}/${order.id}`;
     const poll = async () => {
       try {
         const { data } = await api.get(endpoint);
         if (data?.status === 'PAID') {
           setOrder(data);
           setPaymentDetected(true);
-          triggerPushActivation('loja');
+          triggerPushActivation('recarga');
           if (pollingRef.current) clearInterval(pollingRef.current);
         }
       } catch {}
@@ -306,25 +363,26 @@ export default function Marketplace() {
     poll();
     pollingRef.current = setInterval(poll, 8000);
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, [step, order?.id, paymentDetected, selectedType, triggerPushActivation]);
+  }, [step, order?.id, paymentDetected, selectedKind, triggerPushActivation]);
 
-  // ── RV Hub filtrado (client-side) ──────────────────────────────────────────
-  const allRv: (RvHubProduct & { _type: RvHubType })[] = [
-    ...pinProducts.map((p) => ({ ...p, _type: 'pin' as RvHubType })),
-    ...tvProducts.map((p) => ({ ...p, _type: 'tv' as RvHubType })),
-  ];
+  // ── RV Hub flatlist com kind anotado ───────────────────────────────────────
+  const allRv: (RvHubProduct & { _kind: string })[] = Object.entries(productsByKind).flatMap(
+    ([kind, prods]) => prods.map((p) => ({ ...p, _kind: kind })),
+  );
 
   const filteredRv = allRv.filter((p) => {
     const brandKey = (p.brand ?? p.provider ?? '').toLowerCase();
     const matchSearch = !debSearch || p.name.toLowerCase().includes(debSearch.toLowerCase()) || brandKey.includes(debSearch.toLowerCase());
-    const matchCategory = !category || p.category === category;
+    const matchCategory = !category || p._kind === category;
     return matchSearch && matchCategory;
   });
 
   // ── Handlers ───────────────────────────────────────────────────────────────
-  const handleSelectRv = (product: RvHubProduct & { _type: RvHubType }, varAmount?: number) => {
+  const handleSelectRv = (product: RvHubProduct & { _kind: string }, varAmount?: number) => {
+    const cfg = getKindConfig(product._kind);
+    if (!cfg.hasTransactionFlow) return; // pill já está disabled no card
     setSelected(product);
-    setSelectedType(product._type);
+    setSelectedKind(product._kind);
     setCustomAmount(varAmount !== undefined ? varAmount : (product.variable ? '' : product.amount));
     setStep(1);
     setBuyError('');
@@ -332,16 +390,17 @@ export default function Marketplace() {
 
   const handleCreateOrder = async () => {
     if (!selected) return;
+    const cfg = getKindConfig(selectedKind);
+    if (!cfg.hasTransactionFlow || !cfg.createUrl) { setBuyError('Produto não disponível para compra.'); return; }
     const amount = selected.variable ? Number(customAmount) : selected.amount;
     if (!Number.isFinite(amount) || amount <= 0) { setBuyError('Valor inválido.'); return; }
     setBuying(true);
     setBuyError('');
     try {
-      const endpoint = selectedType === 'pin' ? '/pin/create' : '/tv/create';
       const body: any = { productId: selected.productId, paymentCurrency };
       if (selected.variable) body.customAmount = amount;
-      const { data } = await api.post(endpoint, body);
-      const orderData = data?.pinTopup ?? data?.tvTopup;
+      const { data } = await api.post(cfg.createUrl, body);
+      const orderData = data?.pinTopup ?? data?.tvTopup ?? data?.order;
       if (!orderData) { setBuyError('Resposta inválida.'); return; }
       setOrder(orderData);
       setStep(2);
@@ -373,7 +432,7 @@ export default function Marketplace() {
 
   // ── STEP 2: PAGAMENTO ──────────────────────────────────────────────────────
   if (step === 2 && order) {
-    const isPin = selectedType === 'pin';
+    const isPin = selectedKind === 'pin';
     return (
       <div className="max-w-lg mx-auto">
         <div className="flex items-center gap-2.5 mb-4">
@@ -381,7 +440,7 @@ export default function Marketplace() {
             {isPin ? <Gift className="w-4 h-4 text-bitcoin" /> : <Tv2 className="w-4 h-4 text-bitcoin" />}
           </div>
           <div>
-            <h2 className="text-base font-bold text-white">{isPin ? 'Gift Card' : 'Recarga TV'}</h2>
+            <h2 className="text-base font-bold text-white">{isPin ? 'Gift Card' : getKindLabel(selectedKind)}</h2>
             <p className="text-xs text-gray-500">{order.productName}</p>
           </div>
         </div>
@@ -414,7 +473,20 @@ export default function Marketplace() {
               </div>
             )}
             {isPin && order.pinMessage && (
-              <p className="text-xs text-gray-500 leading-relaxed">{order.pinMessage}</p>
+              order.pinMessage.length <= 50 && !/\s{2,}/.test(order.pinMessage) ? (
+                <div className="bg-gray-900/80 rounded-xl p-4 border border-purple-500/30">
+                  <p className="text-xs text-gray-500 mb-2">Senha do gift card</p>
+                  <p className="font-mono text-xl font-bold text-purple-400 tracking-widest">{order.pinMessage}</p>
+                  <button
+                    onClick={() => copy(order.pinMessage!, false)}
+                    className="mt-3 flex items-center gap-1.5 mx-auto px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <Copy className="w-4 h-4" /> Copiar senha
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500 leading-relaxed">{order.pinMessage}</p>
+              )
             )}
             <div className="flex gap-2">
               <button onClick={() => navigate('/historico')} className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-white font-semibold text-sm transition-colors">
@@ -462,6 +534,7 @@ export default function Marketplace() {
   // ── STEP 1: RESUMO ─────────────────────────────────────────────────────────
   if (step === 1 && selected) {
     const brandKey = selected.brand ?? selected.provider ?? '';
+    const isPin = selectedKind === 'pin';
     return (
       <div className="max-w-lg mx-auto">
         <div className="flex items-center gap-2.5 mb-4">
@@ -475,13 +548,12 @@ export default function Marketplace() {
         </div>
 
         <div className="bg-gray-800/60 rounded-xl border border-gray-700/40 p-5 space-y-4">
-          {/* Banner da marca */}
-          <div className={`rounded-xl p-4 bg-gradient-to-r ${BRAND_BG[brandKey] ?? 'from-gray-700 to-gray-600'} flex items-center gap-3`}>
-            {BRAND_LOGO[brandKey] ? (
-              <img src={BRAND_LOGO[brandKey]} alt={brandKey} className="w-10 h-10 object-contain" />
+          <div className={`rounded-xl p-4 bg-gradient-to-r ${getBrandBg(brandKey)} flex items-center gap-3`}>
+            {getBrandLogo(brandKey) ? (
+              <img src={getBrandLogo(brandKey)!} alt={brandKey} className="w-10 h-10 object-contain" />
             ) : (
               <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
-                {selectedType === 'tv' ? <Tv2 className="w-5 h-5 text-white" /> : <Gift className="w-5 h-5 text-white" />}
+                {isPin ? <Gift className="w-5 h-5 text-white" /> : <Tv2 className="w-5 h-5 text-white" />}
               </div>
             )}
             <div>
@@ -497,7 +569,6 @@ export default function Marketplace() {
             )}
           </div>
 
-          {/* Input de valor livre */}
           {selected.variable && (
             <div className="space-y-1.5">
               <label className="text-xs text-gray-400">
@@ -520,11 +591,10 @@ export default function Marketplace() {
             </div>
           )}
 
-          {/* Breakdown de preço */}
           {(!selected.variable || varValid) && (
             <div className="space-y-2 text-sm">
               <div className="flex justify-between text-gray-400">
-                <span>{selectedType === 'pin' ? 'Valor do gift card' : 'Valor da recarga'}</span>
+                <span>{isPin ? 'Valor do gift card' : 'Valor da recarga'}</span>
                 <span className="text-white">R$ {effectiveAmount.toFixed(2).replace('.', ',')}</span>
               </div>
               <div className="flex justify-between text-gray-400">
@@ -539,6 +609,29 @@ export default function Marketplace() {
           )}
 
           <CurrencySelector value={paymentCurrency} onChange={setPaymentCurrency} />
+
+          {/* Instruções de resgate */}
+          {selected.redemptionInstructions && (
+            <RedemptionInfo
+              label="Como resgatar"
+              icon={<Info className="w-4 h-4 text-blue-400" />}
+              text={selected.redemptionInstructions}
+            />
+          )}
+
+          {/* Como usar */}
+          {selected.howToUse && (
+            <RedemptionInfo
+              label="Passo a passo"
+              icon={<BookOpen className="w-4 h-4 text-purple-400" />}
+              text={selected.howToUse}
+            />
+          )}
+
+          {/* Termos de uso */}
+          {selected.terms && (
+            <TermsBox terms={selected.terms} />
+          )}
 
           {buyError && (
             <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
@@ -561,11 +654,10 @@ export default function Marketplace() {
 
   // ── STEP 0: CATÁLOGO UNIFICADO ─────────────────────────────────────────────
 
-  const isRvHubCategory = Boolean(RVHUB_CAT_LABELS[category]);
+  const isRvHubCategory = rvHubKinds.includes(category);
 
-  // Agrupa produtos RV Hub por marca — um card por marca no grid
-  const rvByBrand = filteredRv.reduce<Record<string, Array<RvHubProduct & { _type: RvHubType }>>>((acc, p) => {
-    const key = p.brand ?? p.provider ?? 'Outros';
+  const rvByBrand = filteredRv.reduce<Record<string, Array<RvHubProduct & { _kind: string }>>>((acc, p) => {
+    const key = normalizeBrand(p.brand ?? p.provider ?? 'Outros');
     (acc[key] = acc[key] ?? []).push(p);
     return acc;
   }, {});
@@ -578,7 +670,6 @@ export default function Marketplace() {
         <meta name="description" content="Compre gift cards, streaming e produtos digitais com DePix, USDT, Bitcoin e mais. Google Play, Netflix, Xbox, SKY e muito mais." />
       </Helmet>
 
-      {/* Hero compacto */}
       <div className="bg-gray-800/50 backdrop-blur-xl rounded-xl border border-gray-700/50 px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 mb-1">
@@ -595,10 +686,8 @@ export default function Marketplace() {
         </div>
       </div>
 
-      {/* Filtros */}
       <div className="bg-gray-800/50 backdrop-blur-xl rounded-xl border border-gray-700/50 p-3">
         <div className="flex flex-col sm:flex-row gap-3">
-          {/* Busca */}
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
@@ -610,7 +699,6 @@ export default function Marketplace() {
             />
           </div>
 
-          {/* Categoria — RV Hub + vendedores unificados */}
           <div className="relative sm:w-52">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
             <select
@@ -619,8 +707,8 @@ export default function Marketplace() {
               className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-gray-900/50 border border-gray-700 text-white focus:border-bitcoin/50 focus:ring-1 focus:ring-bitcoin/30 transition appearance-none cursor-pointer"
             >
               <option value="">Todas as categorias</option>
-              {Object.entries(RVHUB_CAT_LABELS).map(([val, label]) => (
-                <option key={val} value={val}>{label}</option>
+              {rvHubKinds.map((kind) => (
+                <option key={kind} value={kind}>{getKindLabel(kind)}</option>
               ))}
               {sellerCategories.length > 0 && (
                 sellerCategories.flatMap((c: any) => [
@@ -632,7 +720,7 @@ export default function Marketplace() {
               )}
               {sellerCategories.length === 0 && (
                 Object.entries(CATEGORY_LABELS)
-                  .filter(([val]) => !RVHUB_CAT_LABELS[val])
+                  .filter(([val]) => !rvHubKinds.includes(val))
                   .map(([val, label]) => (
                     <option key={val} value={val}>{label}</option>
                   ))
@@ -640,7 +728,6 @@ export default function Marketplace() {
             </select>
           </div>
 
-          {/* Ordenação */}
           <div className="relative sm:w-44">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
             <select
@@ -655,7 +742,6 @@ export default function Marketplace() {
             </select>
           </div>
 
-          {/* Favoritos */}
           <Link
             to="/loja/favoritos"
             className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gray-800/50 border border-gray-700 hover:border-bitcoin/50 text-white transition text-sm"
@@ -665,7 +751,6 @@ export default function Marketplace() {
         </div>
       </div>
 
-      {/* Grade unificada */}
       {loadingProducts ? (
         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
           {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
@@ -696,7 +781,6 @@ export default function Marketplace() {
         </div>
       ) : (
         <>
-          {/* Contagem total */}
           {!rvLoading && !sellerLoading && (
             <p className="text-gray-500 text-xs">
               {Object.keys(rvByBrand).length + pagination.total}{' '}
@@ -706,7 +790,6 @@ export default function Marketplace() {
           )}
 
           <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-            {/* RV Hub — um card por marca, valores como pills */}
             {!rvLoading && Object.entries(rvByBrand).map(([brandKey, prods]) => (
               <RvHubBrandCard
                 key={brandKey}
@@ -716,13 +799,11 @@ export default function Marketplace() {
               />
             ))}
 
-            {/* Vendedores — paginado pelo servidor */}
             {!sellerLoading && sellerProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
           </div>
 
-          {/* Paginação (só vendedores) */}
           {pagination.pages > 1 && !isRvHubCategory && (
             <div className="flex items-center justify-center gap-2 mt-4">
               <button

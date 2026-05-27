@@ -117,20 +117,28 @@ export function deriveLiquidAddress(xpub: string, masterBlindingKeyHex: string, 
 
 /**
  * Gets the next available HD address index — global max across ALL models using the xpub.
- * Prevents address reuse across PixCopiaCola, Boleto, BoletoBatch, and MobileRecharge.
+ * Prevents address reuse across PixCopiaCola, Boleto, BoletoBatch, MobileRecharge, BillPayment.
  */
 export async function getNextAddressIndex(prismaClient: any): Promise<number> {
-  const [r1, r2, r3, r4] = await Promise.all([
+  const [r1, r2, r3, r4, r5, r6, r7, r8] = await Promise.all([
     prismaClient.pixCopiaCola.aggregate({ _max: { liquidAddressIndex: true } }),
     prismaClient.boleto.aggregate({ _max: { liquidAddressIndex: true } }),
     prismaClient.boletoBatch.aggregate({ _max: { liquidAddressIndex: true } }),
     prismaClient.mobileRecharge.aggregate({ _max: { liquidAddressIndex: true } }),
+    prismaClient.billPayment.aggregate({ _max: { liquidAddressIndex: true } }),
+    (prismaClient as any).pinTopup?.aggregate({ _max: { liquidAddressIndex: true } }).catch(() => ({ _max: { liquidAddressIndex: null } })) ?? Promise.resolve({ _max: { liquidAddressIndex: null } }),
+    (prismaClient as any).tvTopup?.aggregate({ _max: { liquidAddressIndex: true } }).catch(() => ({ _max: { liquidAddressIndex: null } })) ?? Promise.resolve({ _max: { liquidAddressIndex: null } }),
+    prismaClient.toprecargasOrder.aggregate({ _max: { liquidAddressIndex: true } }),
   ]);
   const max = Math.max(
     r1._max?.liquidAddressIndex ?? -1,
     r2._max?.liquidAddressIndex ?? -1,
     r3._max?.liquidAddressIndex ?? -1,
     r4._max?.liquidAddressIndex ?? -1,
+    r5._max?.liquidAddressIndex ?? -1,
+    r6._max?.liquidAddressIndex ?? -1,
+    r7._max?.liquidAddressIndex ?? -1,
+    r8._max?.liquidAddressIndex ?? -1,
   );
   return max + 1;
 }

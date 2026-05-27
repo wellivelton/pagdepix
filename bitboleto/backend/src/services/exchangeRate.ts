@@ -1,10 +1,11 @@
 import { prisma } from '../prisma';
 
-interface Rates {
+export interface Rates {
   usdBrl: number;
   btcBrl: number;
   btcUsd: number;
   fetchedAt: Date;
+  provider: 'awesomeapi' | 'coingecko' | 'db_cache';
 }
 
 const CACHE_TTL_MS = 60_000;
@@ -25,6 +26,7 @@ async function fetchFromAwesomeApi(): Promise<Rates> {
     btcBrl,
     btcUsd: btcBrl / usdBrl,
     fetchedAt: new Date(),
+    provider: 'awesomeapi',
   };
 }
 
@@ -45,6 +47,7 @@ async function fetchFromCoinGecko(): Promise<Rates> {
     btcBrl,
     btcUsd,
     fetchedAt: new Date(),
+    provider: 'coingecko',
   };
 }
 
@@ -80,6 +83,7 @@ async function loadFromDb(): Promise<Rates | null> {
       btcBrl: row.btcBrl,
       btcUsd: row.btcUsd,
       fetchedAt: row.fetchedAt,
+      provider: 'db_cache',
     };
   } catch {
     return null;

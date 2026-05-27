@@ -22,6 +22,16 @@ interface NewsFeedState {
   stale: boolean;
 }
 
+interface CacheEntry {
+  items: NewsItem[];
+  fetchedAt: string | null;
+  stale: boolean;
+  ts: number;
+}
+
+const POLL_MS = 30 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
 export function useNewsFeed(category: NewsCategory) {
   const [state, setState] = useState<NewsFeedState>({
     items: [],
@@ -32,40 +42,60 @@ export function useNewsFeed(category: NewsCategory) {
   });
 
   const controllerRef = useRef<AbortController | null>(null);
+  const cacheRef = useRef<Partial<Record<NewsCategory, CacheEntry>>>({});
 
-  const doFetch = useCallback(async () => {
+  const doFetch = useCallback(async (cat: NewsCategory, background = false) => {
     controllerRef.current?.abort();
     const ctrl = new AbortController();
     controllerRef.current = ctrl;
 
-    setState(s => ({ ...s, loading: true, error: false }));
+    if (!background) setState(s => ({ ...s, loading: true, error: false }));
 
     try {
       const { data } = await api.get('/feed', {
-        params: { category, limit: 3 },
+        params: { category: cat, limit: 3 },
         signal: ctrl.signal,
       });
-      setState({
+      const entry: CacheEntry = {
         items: data.items || [],
-        loading: false,
-        error: false,
         fetchedAt: data.fetchedAt ?? null,
         stale: !!data.stale,
+        ts: Date.now(),
+      };
+      cacheRef.current[cat] = entry;
+      setState({
+        items: entry.items,
+        loading: false,
+        error: false,
+        fetchedAt: entry.fetchedAt,
+        stale: entry.stale,
       });
     } catch (err: any) {
       if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
       setState(s => ({ ...s, loading: false, error: true }));
     }
-  }, [category]);
+  }, []);
 
   useEffect(() => {
-    doFetch();
-    const timer = setInterval(doFetch, 10 * 60 * 1000);
+    const cached = cacheRef.current[category];
+    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+      setState({
+        items: cached.items,
+        loading: false,
+        error: false,
+        fetchedAt: cached.fetchedAt,
+        stale: cached.stale,
+      });
+    } else {
+      doFetch(category);
+    }
+
+    const timer = setInterval(() => doFetch(category, true), POLL_MS);
     return () => {
       clearInterval(timer);
       controllerRef.current?.abort();
     };
-  }, [doFetch]);
+  }, [category, doFetch]);
 
-  return { ...state, refetch: doFetch };
+  return { ...state, refetch: () => doFetch(category) };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { ArrowRight, CreditCard, Smartphone, QrCode, Send } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
@@ -20,7 +20,6 @@ const PENDING_STATUSES = new Set([
   'PENDING', 'PROCESSING', 'WAITING', 'AGUARDANDO',
   'PENDENTE', 'EM_PROCESSAMENTO',
 ]);
-const isPaid = (s: string) => PAID_STATUSES.has((s || '').toUpperCase());
 
 interface Tx {
   id: string;
@@ -29,6 +28,13 @@ interface Tx {
   amount: number;
   status: string;
   createdAt: string;
+}
+
+interface Stats {
+  total: number;
+  breakdown: { boletos: number; recargas: number; pix: number };
+  recentTxs: Tx[];
+  sparkline: number[];
 }
 
 const TYPE_ICON = {
@@ -64,36 +70,20 @@ function StatusDot({ status }: { status: string }) {
   return <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />;
 }
 
-function periodStart(period: Period): number {
-  if (period === 'all') return 0;
-  const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
-  return Date.now() - days * 86400000;
-}
-
 function buildSparkline(
-  txs: Tx[],
-  period: Period,
+  buckets: number[],
   w: number,
   h: number,
 ): { line: string; area: string; hasData: boolean } {
-  const buckets = period === '7d' ? 7 : 15;
-  const start = periodStart(period);
-  const span = Date.now() - start || 1;
-  const counts = new Array(buckets).fill(0);
+  if (!buckets.length) return { line: '', area: '', hasData: false };
 
-  txs.forEach(tx => {
-    if (!isPaid(tx.status)) return;
-    const t = new Date(tx.createdAt).getTime();
-    if (t < start) return;
-    const idx = Math.min(Math.floor(((t - start) / span) * buckets), buckets - 1);
-    counts[idx] += tx.amount || 0;
-  });
+  const max = Math.max(...buckets);
+  if (max === 0) return { line: '', area: '', hasData: false };
 
-  const max = Math.max(...counts, 1);
-  const pad = 4;
-  const pts = counts.map((v, i) => ({
-    x: pad + (i / Math.max(buckets - 1, 1)) * (w - pad * 2),
-    y: h - pad - (v / max) * (h - pad * 2),
+  const pad = 2;
+  const pts = buckets.map((v, i) => ({
+    x: pad + (i / (buckets.length - 1)) * (w - pad * 2),
+    y: pad + (1 - v / max) * (h - pad * 2),
   }));
 
   const line = pts.reduce((acc, p, i) => {
@@ -108,7 +98,7 @@ function buildSparkline(
   const first = pts[0];
   const area = `${line} L${last.x.toFixed(1)},${h} L${first.x.toFixed(1)},${h} Z`;
 
-  return { line, area, hasData: counts.some(v => v > 0) };
+  return { line, area, hasData: true };
 }
 
 function useCountUp(target: number, durationMs = 400) {
@@ -120,7 +110,6 @@ function useCountUp(target: number, durationMs = 400) {
   useEffect(() => {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion) { setValue(target); return; }
-
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
     fromRef.current = value;
@@ -149,135 +138,50 @@ function useCountUp(target: number, durationMs = 400) {
 }
 
 const formatBRL = (n: number) =>
-  new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Math.max(n, 0));
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.max(n, 0));
 
 function fmtCompact(v: number) {
-  if (v >= 1000000) return `R$ ${(v / 1000000).toFixed(1)}M`;
-  if (v >= 1000) return `R$ ${(v / 1000).toFixed(1)}k`;
+  if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000)     return `R$ ${(v / 1_000).toFixed(1)}k`;
   return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function TotalProcessadoCard({ profile }: { profile: any }) {
+const EMPTY_STATS: Stats = {
+  total: 0,
+  breakdown: { boletos: 0, recargas: 0, pix: 0, sendPix: 0 },
+  recentTxs: [],
+  sparkline: [],
+};
+
+export default function TotalProcessadoCard({ profile: _profile }: { profile: any }) {
   const navigate = useNavigate();
   const [period, setPeriod] = useState<Period>('all');
-  const [txs, setTxs] = useState<Tx[]>([]);
-  const [txLoading, setTxLoading] = useState(true);
+  const [stats, setStats] = useState<Stats>(EMPTY_STATS);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let done = 0;
-    const merged: Tx[] = [];
-    const check = () => {
-      done++;
-      if (done === 4) {
-        merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setTxs(merged);
-        setTxLoading(false);
-      }
-    };
-
-    api.get('/boleto/list?limit=500')
-      .then(({ data }) =>
-        (data.boletos || []).forEach((b: any) =>
-          merged.push({
-            id: b.id,
-            type: 'boleto',
-            label: 'Boleto',
-            amount: Number(b.amount) || 0,
-            status: b.status,
-            createdAt: b.createdAt,
-          }),
-        ),
-      )
-      .catch(() => {})
-      .finally(check);
-
-    api.get('/recharge/list?limit=500')
-      .then(({ data }) =>
-        (data.recharges || []).forEach((r: any) =>
-          merged.push({
-            id: r.id,
-            type: 'recharge',
-            label: r.operator ? `Recarga ${r.operator}` : 'Recarga',
-            amount: Number(r.amount) || 0,
-            status: r.status,
-            createdAt: r.createdAt,
-          }),
-        ),
-      )
-      .catch(() => {})
-      .finally(check);
-
-    api.get('/pix-copia-cola?limit=500')
-      .then(({ data }) =>
-        (data.items || []).forEach((p: any) =>
-          merged.push({
-            id: p.id,
-            type: 'pix',
-            label: 'Pix Copia e Cola',
-            amount: Number(p.valorOriginal) || 0,
-            status: p.status,
-            createdAt: p.createdAt,
-          }),
-        ),
-      )
-      .catch(() => {})
-      .finally(check);
-
-    api.get('/depix/send-pix?limit=500')
-      .then(({ data }) =>
-        (data.orders || []).forEach((o: any) =>
-          merged.push({
-            id: o.id,
-            type: 'send-pix',
-            label: 'Envio Pix',
-            amount: Number(o.amountBrl) || 0,
-            status: o.status,
-            createdAt: o.createdAt,
-          }),
-        ),
-      )
-      .catch(() => {})
-      .finally(check);
+  const fetchStats = useCallback(async (p: Period) => {
+    setLoading(true);
+    try {
+      const { data } = await api.get<Stats>(`/user/stats?period=${p}`);
+      setStats(data);
+    } catch {
+      setStats(EMPTY_STATS);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const pStart = periodStart(period);
-  const paidInPeriod = txs.filter(t => isPaid(t.status) && new Date(t.createdAt).getTime() >= pStart);
+  useEffect(() => { fetchStats(period); }, [period, fetchStats]);
 
-  let displayTotal: number;
-  if (period === 'all') {
-    const op = profile?.totalByOperation;
-    displayTotal = op
-      ? (op.boletos || 0) + (op.recargas || 0) + (op.pix || 0)
-      : profile?.totalPaid ?? 0;
-  } else {
-    displayTotal = paidInPeriod.reduce((s, t) => s + t.amount, 0);
-  }
-
-  const boletoTotal = period === 'all'
-    ? profile?.totalByOperation?.boletos ?? 0
-    : paidInPeriod.filter(t => t.type === 'boleto').reduce((s, t) => s + t.amount, 0);
-
-  const rechargeTotal = period === 'all'
-    ? profile?.totalByOperation?.recargas ?? 0
-    : paidInPeriod.filter(t => t.type === 'recharge').reduce((s, t) => s + t.amount, 0);
-
-  const pixTotal = period === 'all'
-    ? profile?.totalByOperation?.pix ?? 0
-    : paidInPeriod.filter(t => t.type === 'pix' || t.type === 'send-pix').reduce((s, t) => s + t.amount, 0);
-
-  const animated = useCountUp(displayTotal);
-  const isLoading = txLoading && period !== 'all';
+  const { total, breakdown, recentTxs, sparkline } = stats;
+  const animated = useCountUp(total);
 
   const SPARK_W = 128;
   const SPARK_H = 40;
-  const { line, area, hasData } = buildSparkline(txs, period, SPARK_W, SPARK_H);
-
-  const recentTxs = txs.slice(0, 3);
+  const { line, area, hasData } = useMemo(
+    () => buildSparkline(sparkline, SPARK_W, SPARK_H),
+    [sparkline],
+  );
 
   return (
     <div className="bg-app-surface border border-app-stroke rounded-xl p-5 shadow-card-premium h-full flex flex-col">
@@ -319,7 +223,7 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
       {/* Value + sparkline */}
       <div className="flex items-end gap-4 mb-2">
         <div className="flex-1 min-w-0">
-          {isLoading ? (
+          {loading ? (
             <div className="h-10 w-44 bg-app-elevated rounded-lg animate-pulse" />
           ) : (
             <div
@@ -331,11 +235,8 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
           )}
         </div>
         <div className="hidden sm:block flex-shrink-0">
-          {txLoading ? (
-            <div
-              className="bg-app-elevated rounded animate-pulse"
-              style={{ width: SPARK_W, height: SPARK_H }}
-            />
+          {loading ? (
+            <div className="bg-app-elevated rounded animate-pulse" style={{ width: SPARK_W, height: SPARK_H }} />
           ) : (
             <svg
               width={SPARK_W}
@@ -372,7 +273,7 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
       </div>
 
       {/* Empty state CTA */}
-      {displayTotal === 0 && !isLoading && (
+      {total === 0 && !loading && (
         <button
           type="button"
           onClick={() => navigate('/pagar')}
@@ -383,9 +284,9 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
         </button>
       )}
 
-      {/* Breakdown by type */}
+      {/* Breakdown por tipo */}
       <div className="mt-3">
-        {txLoading ? (
+        {loading ? (
           <div className="flex gap-4">
             {[1, 2, 3].map(i => (
               <div key={i} className="h-3.5 w-20 bg-app-elevated rounded animate-pulse" />
@@ -394,9 +295,9 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
         ) : (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             {[
-              { dot: '#F7931A', label: 'Boletos',  value: boletoTotal  },
-              { dot: '#60a5fa', label: 'Recargas', value: rechargeTotal },
-              { dot: '#34d399', label: 'Pix',      value: pixTotal      },
+              { dot: '#F7931A', label: 'Boletos',  value: breakdown.boletos  },
+              { dot: '#60a5fa', label: 'Recargas', value: breakdown.recargas },
+              { dot: '#34d399', label: 'Pix',      value: breakdown.pix },
             ].map(({ dot, label, value }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: dot }} />
@@ -413,13 +314,13 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
       {/* Divider */}
       <div className="h-px bg-app-stroke my-4" />
 
-      {/* Atividade Recente */}
+      {/* Atividade recente */}
       <div>
         <p className="text-[11px] font-semibold text-app-subtle uppercase tracking-widest mb-3">
           Atividade recente
         </p>
 
-        {txLoading ? (
+        {loading ? (
           <div className="space-y-3">
             {[1, 2, 3].map(i => (
               <div key={i} className="flex items-center gap-2 animate-pulse">
@@ -446,7 +347,7 @@ export default function TotalProcessadoCard({ profile }: { profile: any }) {
                   <div className="flex items-center gap-1.5 flex-1 min-w-0">
                     <StatusDot status={tx.status} />
                     <span className="text-[13px] font-medium text-app-text truncate">
-                      {TYPE_LABEL[tx.type]}
+                      {tx.label}
                     </span>
                   </div>
                   <span

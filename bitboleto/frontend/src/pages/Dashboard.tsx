@@ -33,6 +33,7 @@ import {
   Sun,
   Moon,
   QrCode,
+  ArrowLeftRight,
   type LucideIcon,
 } from 'lucide-react';
 import api from '../services/api';
@@ -67,16 +68,17 @@ type MenuSection = {
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/dashboard': { title: 'Dashboard', subtitle: 'Resumo e ações rápidas' },
-  '/loja': { title: 'Loja', subtitle: 'Produtos digitais pagos com Depix via Pix' },
+  '/loja': { title: 'Loja', subtitle: 'Gift cards, TV e produtos digitais com DePix' },
   '/loja/carrinho': { title: 'Carrinho', subtitle: 'Seus itens para finalizar compra' },
   '/loja/checkout-cart': { title: 'Checkout', subtitle: 'Finalize sua compra com Pix' },
   '/minhas-compras': { title: 'Minhas compras', subtitle: 'Histórico de compras na loja' },
   '/loja/notificacoes': { title: 'Notificações', subtitle: 'Notificações de pedidos da loja' },
-  '/pagar': { title: 'Pagar Boleto', subtitle: 'Pague seus boletos com Depix na Liquid Network' },
+  '/pagar': { title: 'Pagar Boleto', subtitle: 'Pague seus boletos com cripto' },
   '/recarga': { title: 'Recarga de Celular', subtitle: 'Recarregue seu celular com Depix' },
   '/area-pix': { title: 'Área Pix', subtitle: 'Envie Pix ou pague com código Pix Copia e Cola' },
   '/enviar-pix': { title: 'Enviar com chave Pix', subtitle: 'Converta Depix em Pix para qualquer chave' },
   '/pix-copia-cola': { title: 'Pagar Pix Copia e Cola', subtitle: 'Pague usando um código Pix copiado' },
+  '/swap': { title: 'Swap Cripto', subtitle: 'Converta entre 200+ ativos em segundos' },
   '/historico': { title: 'Histórico de Transações', subtitle: 'Todas as suas operações' },
   '/suporte': { title: 'Suporte', subtitle: 'Entre em contato conosco pelo Telegram' },
   '/kyc': { title: 'Verificação', subtitle: 'Verifique sua identidade' },
@@ -181,13 +183,13 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
         }
 
         if (verificationEnabled && (data.kycStatus?.level ?? 0) < 1 && data.role !== 'ADMIN') {
-          if (location.pathname !== '/kyc') {
+          if (window.location.pathname !== '/kyc') {
             navigate('/kyc');
           }
         }
       })
       .catch(() => {});
-  }, [user?.id, location.pathname, navigate]);
+  }, [user?.id, navigate]);
 
   const handleLogout = () => {
     localStorage.clear();
@@ -235,22 +237,21 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
     {
       items: [{ icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' }],
     },
-    // CONSUMER_DISABLED — descomentar quando área de consumidor estiver pronta
-    // {
-    //   label: 'CONSUMIDOR',
-    //   labelColor: 'text-blue-400',
-    //   items: [
-    //     { icon: ShoppingBag, label: 'Loja', path: '/loja' },
-    //     { icon: ShoppingCart, label: 'Minhas Compras', path: '/minhas-compras' },
-    //   ],
-    // },
+    {
+      label: 'LOJA',
+      labelColor: 'text-purple-400',
+      items: [
+        { icon: ShoppingBag, label: 'Loja', path: '/loja' },
+      ],
+    },
     {
       label: 'PAGAMENTOS',
       labelColor: 'text-green-400',
       items: [
-        { icon: CreditCard, label: 'Pagar Boleto', path: '/pagar' },
+        { icon: FileText, label: 'Pagar Boleto', path: '/pagar' },
         { icon: Smartphone, label: 'Recarga de Celular', path: '/recarga' },
         { icon: QrCode, label: 'Área Pix', path: '/area-pix' },
+        { icon: ArrowLeftRight, label: 'Swap Cripto', path: '/swap' },
         { icon: History, label: 'Histórico de Transações', path: '/historico' },
       ],
     },
@@ -608,7 +609,7 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
                 <p className="text-[11px] font-semibold text-app-subtle uppercase tracking-widest mb-4">
                   Ações rápidas
                 </p>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   <QuickActionCard
                     icon={CreditCard}
                     label="Pagar Boleto"
@@ -628,6 +629,12 @@ export default function Dashboard({ children }: { children?: React.ReactNode }) 
                     label="Área Pix"
                     sublabel="Copia e Cola · Enviar"
                     path="/area-pix"
+                  />
+                  <QuickActionCard
+                    icon={ArrowLeftRight}
+                    label="Swap Cripto"
+                    sublabel="Converta entre 200+ ativos"
+                    path="/swap"
                   />
                   <QuickActionCard
                     icon={Store}

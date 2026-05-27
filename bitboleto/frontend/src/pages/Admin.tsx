@@ -33,7 +33,10 @@ import {
   Copy,
   Upload,
   Search,
-  Banknote
+  Banknote,
+  RefreshCw,
+  ArrowRightLeft,
+  FileText,
 } from 'lucide-react';
 import api from '../services/api';
 import AdminDashboard from './AdminDashboard';
@@ -72,7 +75,15 @@ export default function Admin() {
   const [actionLoading, setActionLoading] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
-  const [tab, setTab] = useState<'dashboard' | 'boletos' | 'recargas' | 'pixCopiaCola' | 'users' | 'affiliates' | 'commerce' | 'marketplace' | 'stats' | 'config' | 'support' | 'comunicacoes' | 'bot' | 'audit' | 'sendPix'>('dashboard');
+  const [tab, setTab] = useState<'dashboard' | 'boletos' | 'recargas' | 'pixCopiaCola' | 'users' | 'affiliates' | 'commerce' | 'marketplace' | 'stats' | 'config' | 'support' | 'comunicacoes' | 'bot' | 'audit' | 'sendPix' | 'swapRefunds' | 'contas'>('dashboard');
+  const [billPayments, setBillPayments] = useState<any[]>([]);
+  const [billPaymentsLoading, setBillPaymentsLoading] = useState(false);
+  const [billPaymentFilter, setBillPaymentFilter] = useState('PENDING');
+  const [billPaymentActionLoading, setBillPaymentActionLoading] = useState<string | null>(null);
+  const [swapRefunds, setSwapRefunds] = useState<any[]>([]);
+  const [swapRefundsLoading, setSwapRefundsLoading] = useState(false);
+  const [swapRefundTxid, setSwapRefundTxid] = useState<Record<string, string>>({});
+  const [swapRefundProcessing, setSwapRefundProcessing] = useState<string | null>(null);
   const [recharges, setRecharges] = useState<any[]>([]);
   const [rechargeFilter, setRechargeFilter] = useState<string>('PENDING');
   const [rechargesLoading, setRechargesLoading] = useState(false);
@@ -80,8 +91,6 @@ export default function Admin() {
   const [uploadingRechargeId, setUploadingRechargeId] = useState<string | null>(null);
   const [receiptFilesRecharge, setReceiptFilesRecharge] = useState<Record<string, File | null>>({});
   const [emailModal, setEmailModal] = useState<{ userId: string; userName: string; userEmail: string } | null>(null);
-  const [asaasBoletoLoadingId, setAsaasBoletoLoadingId] = useState<string | null>(null);
-  const [asaasBoletoResults, setAsaasBoletoResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [emailSending, setEmailSending] = useState(false);
@@ -330,7 +339,71 @@ export default function Admin() {
       loadSupportTickets();
       loadSupportCounts();
     }
+    if (tab === 'swapRefunds') loadSwapRefunds();
+    if (tab === 'contas') loadBillPayments();
   }, [tab]);
+
+  const loadBillPayments = async () => {
+    setBillPaymentsLoading(true);
+    try {
+      const { data } = await api.get('/bill-payments/admin/list', { params: { limit: 100 } });
+      setBillPayments(data.billPayments ?? []);
+    } catch {
+    } finally {
+      setBillPaymentsLoading(false);
+    }
+  };
+
+  const handleApproveBillPayment = async (id: string) => {
+    if (!window.confirm('Aprovar este pagamento de conta?')) return;
+    setBillPaymentActionLoading(id);
+    try {
+      await api.post(`/bill-payments/admin/${id}/approve`);
+      await loadBillPayments();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Erro ao aprovar.');
+    } finally {
+      setBillPaymentActionLoading(null);
+    }
+  };
+
+  const handleRejectBillPayment = async (id: string) => {
+    if (!window.confirm('Rejeitar este pagamento? O cliente será notificado.')) return;
+    setBillPaymentActionLoading(id);
+    try {
+      await api.post(`/bill-payments/admin/${id}/reject`);
+      await loadBillPayments();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Erro ao rejeitar.');
+    } finally {
+      setBillPaymentActionLoading(null);
+    }
+  };
+
+  const loadSwapRefunds = async () => {
+    setSwapRefundsLoading(true);
+    try {
+      const { data } = await api.get('/admin/sideswap/refunds');
+      setSwapRefunds(data.swaps ?? []);
+    } catch {
+    } finally {
+      setSwapRefundsLoading(false);
+    }
+  };
+
+  const handleCompleteRefund = async (swapId: string) => {
+    setSwapRefundProcessing(swapId);
+    try {
+      await api.post(`/admin/sideswap/refund/${swapId}/complete`, {
+        txid: swapRefundTxid[swapId]?.trim() || undefined,
+      });
+      setSwapRefunds(prev => prev.map(s => s.id === swapId ? { ...s, status: 'refunded' } : s));
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Erro ao processar reembolso.');
+    } finally {
+      setSwapRefundProcessing(null);
+    }
+  };
 
   const loadBoletos = async () => {
     try {
@@ -845,23 +918,6 @@ export default function Admin() {
     }
   };
 
-  const handlePayBoletoViaAsaas = async (boletoId: string) => {
-    if (!window.confirm('Pagar este boleto via Asaas? O valor será debitado da conta Asaas.')) return;
-    setAsaasBoletoLoadingId(boletoId);
-    setAsaasBoletoResults((prev) => { const n = { ...prev }; delete n[boletoId]; return n; });
-    try {
-      const { data } = await api.post(`/admin/boleto/${boletoId}/pay-asaas`);
-      setAsaasBoletoResults((prev) => ({ ...prev, [boletoId]: { ok: true, msg: 'Boleto pago via Asaas!' } }));
-      if (data.receiptUrl) window.open(data.receiptUrl, '_blank');
-      await loadBoletos();
-    } catch (err: any) {
-      const msg = err.response?.data?.error || 'Falha ao pagar via Asaas.';
-      setAsaasBoletoResults((prev) => ({ ...prev, [boletoId]: { ok: false, msg } }));
-    } finally {
-      setAsaasBoletoLoadingId(null);
-    }
-  };
-
   const handleApprove = (boletoId: string) => {
     setUploadingId(boletoId);
   };
@@ -1089,6 +1145,30 @@ export default function Admin() {
         >
           <Send className="w-4 h-4" />
           Enviar PIX
+        </button>
+        <button
+          onClick={() => setTab('contas')}
+          className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-1.5 ${tab === 'contas' ? 'bg-gradient-to-r from-bitcoin to-orange-500 text-black' : 'bg-gray-800 text-gray-300'}`}
+        >
+          <FileText className="w-4 h-4" />
+          Pagar Conta
+          {billPayments.filter(b => b.status === 'PENDING').length > 0 && (
+            <span className="bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+              {billPayments.filter(b => b.status === 'PENDING').length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setTab('swapRefunds')}
+          className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-1.5 ${tab === 'swapRefunds' ? 'bg-gradient-to-r from-bitcoin to-orange-500 text-black' : 'bg-gray-800 text-gray-300'}`}
+        >
+          <RefreshCw className="w-4 h-4" />
+          Reembolsos Swap
+          {swapRefunds.filter(s => s.status === 'failed').length > 0 && (
+            <span className="bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+              {swapRefunds.filter(s => s.status === 'failed').length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -1328,26 +1408,6 @@ export default function Admin() {
                       </div>
                     ) : (
                       <>
-                        {boleto.barcode && (
-                          <>
-                            <button
-                              onClick={() => handlePayBoletoViaAsaas(boleto.id)}
-                              disabled={asaasBoletoLoadingId === boleto.id || actionLoading}
-                              className="flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-xl transition-all"
-                            >
-                              {asaasBoletoLoadingId === boleto.id
-                                ? <Loader2 className="w-5 h-5 animate-spin" />
-                                : <Banknote className="w-5 h-5" />}
-                              Pagar com Asaas
-                            </button>
-                            {asaasBoletoResults[boleto.id] && (
-                              <p className={`text-xs text-center font-medium ${asaasBoletoResults[boleto.id].ok ? 'text-green-400' : 'text-red-400'}`}>
-                                {asaasBoletoResults[boleto.id].msg}
-                              </p>
-                            )}
-                          </>
-                        )}
-
                         <button
                           onClick={() => handleApprove(boleto.id)}
                           disabled={actionLoading}
@@ -1391,7 +1451,7 @@ export default function Admin() {
           <div className="bg-gradient-to-br from-gray-800/50 to-gray-800/30 backdrop-blur-xl rounded-2xl p-4 border border-gray-700/50 mb-6">
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex gap-2">
-                {['PENDING', 'PAID', 'ALL'].map((f) => (
+                {['PENDING', 'PROCESSING', 'PAID', 'ALL'].map((f) => (
                   <button
                     key={f}
                     onClick={() => { setRechargeFilter(f); loadRecharges(f); }}
@@ -1401,7 +1461,7 @@ export default function Admin() {
                         : 'bg-gray-700/50 text-gray-400 hover:bg-gray-700'
                     }`}
                   >
-                    {f === 'PENDING' ? '⏳ Aguardando' : f === 'PAID' ? '✅ Pagas' : '📋 Todas'}
+                    {f === 'PENDING' ? '⏳ Aguardando' : f === 'PROCESSING' ? '🔄 Processando' : f === 'PAID' ? '✅ Pagas' : '📋 Todas'}
                   </button>
                 ))}
               </div>
@@ -1618,7 +1678,7 @@ export default function Admin() {
                               className="flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white font-bold py-2 px-4 rounded-xl hover:shadow-lg disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-4 h-4" />
-                              Aprovar com comprovante
+                              Aprovar (com comprovante)
                             </button>
                             <button
                               onClick={() => window.confirm('Tem certeza que deseja reprovar esta recarga? Ela será cancelada.') && handleRejectRecharge(rec.id)}
@@ -1629,6 +1689,11 @@ export default function Admin() {
                             </button>
                           </div>
                         )}
+                      </div>
+                    )}
+                    {rec.status === 'PROCESSING' && (
+                      <div className="flex items-center gap-2">
+                        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-sm font-medium">🔄 Processando</span>
                       </div>
                     )}
                     {rec.status === 'PAID' && (
@@ -2607,6 +2672,87 @@ export default function Admin() {
       {tab === 'audit' && <AdminAudit />}
       {tab === 'sendPix' && <AdminSendPixAudit />}
 
+      {tab === 'swapRefunds' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5 text-bitcoin" />
+              Reembolsos de Swap Pendentes
+            </h2>
+            <button onClick={loadSwapRefunds} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">
+              <RefreshCw className={`w-4 h-4 text-gray-400 ${swapRefundsLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {swapRefundsLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-bitcoin animate-spin" /></div>
+          ) : swapRefunds.length === 0 ? (
+            <div className="bg-gray-800/50 rounded-xl p-8 text-center border border-gray-700/50">
+              <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto mb-2" />
+              <p className="text-gray-400">Nenhum reembolso pendente.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {swapRefunds.map((sw: any) => {
+                const isPending = sw.status === 'failed';
+                const isProcessing = swapRefundProcessing === sw.id;
+                return (
+                  <div key={sw.id} className={`bg-gray-800/50 rounded-xl border p-4 space-y-3 ${isPending ? 'border-yellow-500/30' : 'border-green-500/20'}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-lg ${isPending ? 'bg-yellow-500/10 text-yellow-400' : 'bg-green-500/10 text-green-400'}`}>
+                        {isPending ? '⏳ Aguardando processamento' : '✅ Reembolsado'}
+                      </span>
+                      <span className="text-xs text-gray-500">{new Date(sw.refundRequestAt || sw.createdAt).toLocaleString('pt-BR')}</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <p className="text-gray-500 mb-0.5">Usuário</p>
+                        <p className="text-white">{sw.user?.name || sw.userId}</p>
+                        <p className="text-gray-500">{sw.user?.email}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-500 mb-0.5">Valor</p>
+                        <p className="text-white font-semibold">{sw.depositAmount ? `${sw.depositAmount} ${sw.depositAsset}` : sw.depositAsset}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-gray-500 mb-0.5">Endereço de reembolso</p>
+                        <p className="text-white font-mono break-all">{sw.refundAddress}</p>
+                      </div>
+                      {sw.errorMessage && (
+                        <div className="col-span-2 md:col-span-4">
+                          <p className="text-gray-500 mb-0.5">Erro original</p>
+                          <p className="text-red-400 text-xs">{sw.errorMessage}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {isPending && (
+                      <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                        <input
+                          type="text"
+                          placeholder="TXID da transação de reembolso (opcional)"
+                          value={swapRefundTxid[sw.id] || ''}
+                          onChange={e => setSwapRefundTxid(prev => ({ ...prev, [sw.id]: e.target.value }))}
+                          className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-bitcoin/40 font-mono"
+                        />
+                        <button
+                          onClick={() => handleCompleteRefund(sw.id)}
+                          disabled={isProcessing}
+                          className="px-4 py-2 rounded-lg text-xs font-semibold bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                        >
+                          {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : '✓ Marcar como reembolsado'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Modal de gestão de integração API do afiliado */}
       {showApiModal && selectedAffiliate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
@@ -3483,6 +3629,134 @@ export default function Admin() {
           </div>
         </div>
       )}
+
+      {/* ── ABA: PAGAR CONTA (BillPayment / RV Hub) ── */}
+      {tab === 'contas' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <FileText className="w-5 h-5 text-bitcoin" />
+              Pagamentos de Conta
+            </h2>
+            <button onClick={loadBillPayments} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">
+              <RefreshCw className={`w-4 h-4 text-gray-400 ${billPaymentsLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {/* Filtros */}
+          <div className="flex flex-wrap gap-2">
+            {['PENDING', 'PROCESSING', 'PAID', 'CANCELLED', 'FAILED', 'ALL'].map((f) => (
+              <button
+                key={f}
+                onClick={() => setBillPaymentFilter(f)}
+                className={`px-3 py-1.5 rounded-xl text-sm font-medium transition-all ${
+                  billPaymentFilter === f
+                    ? 'bg-gradient-to-r from-bitcoin to-orange-500 text-black'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                {f === 'PENDING' ? '⏳ Pendentes' : f === 'PROCESSING' ? '🔄 Processando' : f === 'PAID' ? '✅ Pagos' : f === 'CANCELLED' ? '❌ Cancelados' : f === 'FAILED' ? '⚠️ Falhos' : '📋 Todos'}
+              </button>
+            ))}
+          </div>
+
+          {billPaymentsLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-bitcoin animate-spin" /></div>
+          ) : (
+            <div className="space-y-4">
+              {billPayments
+                .filter(bp => billPaymentFilter === 'ALL' || bp.status === billPaymentFilter)
+                .length === 0 ? (
+                <div className="bg-gray-800/50 rounded-xl p-8 text-center border border-gray-700/50">
+                  <CheckCircle2 className="w-10 h-10 text-gray-600 mx-auto mb-2" />
+                  <p className="text-gray-400">Nenhum pagamento neste filtro.</p>
+                </div>
+              ) : (
+                billPayments
+                  .filter(bp => billPaymentFilter === 'ALL' || bp.status === billPaymentFilter)
+                  .map((bp: any) => (
+                    <div key={bp.id} className="bg-gradient-to-br from-gray-800/50 to-gray-800/30 backdrop-blur-xl rounded-2xl p-5 border border-gray-700/50">
+                      <div className="flex flex-col lg:flex-row gap-5">
+                        <div className="flex-1 space-y-3">
+                          {/* Usuário */}
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-gradient-to-br from-bitcoin to-orange-600 rounded-full flex items-center justify-center text-black font-bold text-lg flex-shrink-0">
+                              {bp.user?.name?.charAt(0).toUpperCase() || '?'}
+                            </div>
+                            <div>
+                              <p className="font-bold text-white">{bp.user?.name || 'Usuário'}</p>
+                              <p className="text-sm text-gray-400">{bp.user?.email}</p>
+                            </div>
+                            <span className={`ml-auto text-xs font-semibold px-2.5 py-1 rounded-lg ${
+                              bp.status === 'PENDING' ? 'bg-yellow-500/15 text-yellow-400' :
+                              bp.status === 'PROCESSING' ? 'bg-blue-500/15 text-blue-400' :
+                              bp.status === 'PAID' ? 'bg-green-500/15 text-green-400' :
+                              'bg-red-500/15 text-red-400'
+                            }`}>{bp.status}</span>
+                          </div>
+
+                          {/* Financeiro */}
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="bg-gray-900/50 rounded-xl p-3">
+                              <p className="text-xs text-gray-400 mb-0.5">Valor conta</p>
+                              <p className="font-bold text-white">R$ {Number(bp.amount).toFixed(2)}</p>
+                            </div>
+                            <div className="bg-gray-900/50 rounded-xl p-3">
+                              <p className="text-xs text-gray-400 mb-0.5">Taxa</p>
+                              <p className="font-bold text-yellow-400">R$ {Number(bp.fee).toFixed(2)}</p>
+                            </div>
+                            <div className="bg-gray-900/50 rounded-xl p-3">
+                              <p className="text-xs text-gray-400 mb-0.5">Total</p>
+                              <p className="font-bold text-bitcoin">R$ {Number(bp.totalAmount).toFixed(2)}</p>
+                            </div>
+                          </div>
+
+                          {/* Código + beneficiário */}
+                          {(bp.barcode || bp.digitableLine) && (
+                            <div className="bg-gray-900/50 rounded-xl p-3">
+                              <p className="text-xs text-gray-400 mb-1">Código de barras</p>
+                              <p className="font-mono text-xs text-white break-all">{bp.barcode || bp.digitableLine}</p>
+                            </div>
+                          )}
+                          <p className="text-xs text-gray-500">{new Date(bp.createdAt).toLocaleString('pt-BR')} · ID: <code className="font-mono">{bp.id.slice(0, 8)}</code></p>
+                        </div>
+
+                        {/* Ações */}
+                        <div className="flex flex-col gap-2 min-w-[180px]">
+                          {bp.status === 'PENDING' && (
+                            <>
+                              <button
+                                onClick={() => handleApproveBillPayment(bp.id)}
+                                disabled={billPaymentActionLoading === bp.id}
+                                className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-green-500 to-green-600 text-white font-bold text-sm disabled:opacity-50 transition-all"
+                              >
+                                {billPaymentActionLoading === bp.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                                Aprovar
+                              </button>
+                              <button
+                                onClick={() => handleRejectBillPayment(bp.id)}
+                                disabled={billPaymentActionLoading === bp.id}
+                                className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-gray-700 hover:bg-red-600 text-white font-bold text-sm disabled:opacity-50 transition-all"
+                              >
+                                <XCircle className="w-4 h-4" /> Rejeitar
+                              </button>
+                            </>
+                          )}
+                          {bp.status === 'PAID' && (
+                            <div className="flex items-center justify-center py-4">
+                              <CheckCircle2 className="w-10 h-10 text-green-400" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

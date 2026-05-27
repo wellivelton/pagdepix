@@ -31,6 +31,14 @@ enum MobileRechargeStatus {
   CANCELLED
 }
 
+enum BillPaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  CANCELLED
+  FAILED
+}
+
 enum PaymentCurrency {
   DEPIX
   USDT
@@ -156,6 +164,7 @@ model User {
 
   boletos      Boleto[]
   mobileRecharges MobileRecharge[]
+  billPayments BillPayment[]
   depixOrders  DepixOrder[]
   affiliate    Affiliate?
   referralEarnings  ReferralEarning[] @relation("ReferralEarner")
@@ -203,6 +212,8 @@ model User {
   pushSubscriptions  PushSubscription[]
   userNotifications  UserNotification[]
   pushPreference     UserPushPreference?
+  sideswapSwaps      SideswapSwap[]
+  toprecargasOrders  ToprecargasOrder[]
 }
 
 /** Sessão de verificação de email no cadastro (código 6 dígitos, 5 min, máx 3 tentativas) */
@@ -487,6 +498,8 @@ model Boleto {
   paidViaAsaas   Boolean @default(false)
   asaasPaymentId String?
 
+  digitableLine   String? // linha digitável 47d
+
   apiKeyId    String?
   externalRef String?
   isSandbox   Boolean  @default(false)
@@ -528,6 +541,7 @@ model Affiliate {
   coupons      Coupon[]
   boletos      Boleto[]               @relation("BoletoAffiliate")
   mobileRecharges MobileRecharge[]
+  billPayments BillPayment[]
   depixOrders  DepixOrder[]
   pixCopiaCola PixCopiaCola[]
   withdrawals  Withdrawal[]
@@ -579,6 +593,7 @@ model AffiliateTransaction {
   affiliateId      String
   boletoId         String?  // Opcional: pode ser boleto, recarga ou Depix
   mobileRechargeId String?  // Opcional: para comissões de recargas
+  billPaymentId    String?  // Opcional: para comissões de pagamento de contas
   depixOrderId     String?  // Opcional: para comissões de Depix
   pixCopiaColaId   String?  // Opcional: para comissões de Pix Copia e Cola
   amount           Float
@@ -590,6 +605,7 @@ model AffiliateTransaction {
   affiliate      Affiliate       @relation(fields: [affiliateId], references: [id])
   boleto         Boleto?         @relation(fields: [boletoId], references: [id])
   mobileRecharge MobileRecharge? @relation(fields: [mobileRechargeId], references: [id])
+  billPayment    BillPayment?    @relation(fields: [billPaymentId], references: [id])
   depixOrder     DepixOrder?     @relation(fields: [depixOrderId], references: [id])
   pixCopiaCola   PixCopiaCola?   @relation(fields: [pixCopiaColaId], references: [id])
 
@@ -597,6 +613,7 @@ model AffiliateTransaction {
   @@index([status])
   @@index([boletoId])
   @@index([mobileRechargeId])
+  @@index([billPaymentId])
   @@index([depixOrderId])
 }
 
@@ -614,6 +631,7 @@ model Coupon {
   affiliate    Affiliate? @relation(fields: [affiliateId], references: [id])
   boletos      Boleto[]
   mobileRecharges MobileRecharge[]
+  billPayments BillPayment[]
   depixOrders  DepixOrder[]
   pixCopiaCola PixCopiaCola[]
   couponUsages CouponUsage[]
@@ -821,6 +839,7 @@ model CouponUsage {
   depixOrderId      String?  // ID do pedido SwapVerse quando for Receber Pix
   pixCopiaColaId    String?  // ID do pedido Pix Copia e Cola
   mobileRechargeId  String?  // ID do pedido Mobile Recharge
+  billPaymentId     String?  // ID do pagamento de conta
   createdAt       DateTime @default(now())
 
   coupon Coupon @relation(fields: [couponId], references: [id])
@@ -947,6 +966,8 @@ model MobileRecharge {
 
   asaasRechargeId    String?
   asaasStatus        String?
+  authorizationCode  String?
+  nsu                String?
   liquidAddressIndex Int?    @unique
   userIp             String  @default("")
 
@@ -960,6 +981,48 @@ model MobileRecharge {
   @@index([status, createdAt])
   @@index([apiKeyId])
   @@index([externalRef])
+}
+
+model BillPayment {
+  id            String            @id @default(uuid())
+  userId        String
+  barcode       String?
+  digitableLine String?
+  amount        Float
+  fee           Float
+  totalAmount   Float
+  depixAmount   Float
+  walletAddress String
+  status        BillPaymentStatus @default(PENDING)
+  txid          String?           @unique
+  receiptUrl    String?
+
+  couponUsed  String?
+  couponId    String?
+  affiliateId String?
+
+  paymentCurrency   PaymentCurrency @default(DEPIX)
+  exchangeRate      Float?
+  cryptoAmount      String?
+  rateLockExpiresAt DateTime?
+  rateExpired       Boolean         @default(false)
+  rateProvider      String?
+  rateTimestamp     DateTime?
+
+  liquidAddressIndex Int?    @unique
+  userIp             String  @default("")
+
+  createdAt DateTime  @default(now())
+  paidAt    DateTime?
+
+  user      User       @relation(fields: [userId], references: [id])
+  coupon    Coupon?    @relation(fields: [couponId], references: [id])
+  affiliate Affiliate? @relation(fields: [affiliateId], references: [id])
+
+  transactions AffiliateTransaction[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
 }
 
 model PixCopiaCola {
@@ -2093,4 +2156,108 @@ model WebhookIdempotencyKey {
   @@unique([source, eventType, externalId])
   @@index([processedAt])
   @@map("webhook_idempotency_keys")
+}
+
+// ========================================
+// SIDESWAP — Liquid Network DEX
+// ========================================
+
+// Status: pending_deposit → broadcasting → completed → failed → refunded
+model SideswapSwap {
+  id               String   @id @default(uuid())
+  userId           String
+  status           String   @default("pending_deposit")
+  depositAsset     String
+  settleAsset      String
+  depositAmount    Decimal? @db.Decimal(20, 8)
+  settleAmount     Decimal? @db.Decimal(20, 8)
+  settleAddress    String
+  depositAddress   String?
+  depositTxid      String?
+  settleTxid       String?
+  sideswapOrderId  String?
+  errorMessage     String?
+  refundAddress    String?
+  refundRequestAt  DateTime?
+  rawQuote         Json?
+  rawPset          String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("sideswap_swaps")
+}
+
+// ========================================
+// TOPRECARGAS INTEGRATION
+// ========================================
+
+model ToprecargasProduct {
+  id                 String    @id @default(uuid())
+  externalId         Int       @unique
+  nome               String
+  descricao          String?   @db.Text
+  preco              Float
+  categoria          String
+  estoqueTotal       Int       @default(0)
+  estoqueDisponivel  Int       @default(0)
+  ativo              Boolean   @default(true)
+  vendidos           Int       @default(0)
+  mediaEstrelas      Float?
+  totalAvaliacoes    Int       @default(0)
+  visivel            Boolean   @default(true)
+  removedAt          DateTime?
+  rawPayload         Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  orders ToprecargasOrder[]
+
+  @@index([visivel, categoria])
+  @@map("toprecargas_products")
+}
+
+model ToprecargasOrder {
+  id                    String             @id @default(uuid())
+  userId                String
+  user                  User               @relation(fields: [userId], references: [id])
+  productId             String
+  product               ToprecargasProduct @relation(fields: [productId], references: [id])
+  externalProductId     Int
+  productName           String
+  productCategoria      String
+  precoOriginal         Float
+  precoFinal            Float
+  fee                   Float              @default(0)
+  totalAmount           Float
+  depixAmount           Float
+  walletAddress         String
+  liquidAddressIndex    Int?               @unique
+  paymentCurrency       PaymentCurrency    @default(DEPIX)
+  exchangeRate          Float?
+  cryptoAmount          String?
+  rateLockExpiresAt     DateTime?
+  rateExpired           Boolean            @default(false)
+  txid                  String?            @unique
+  status                String             @default("PENDING")
+  codigoEntregue        String?            @db.VarChar(500)
+  codigoMensagem        String?            @db.Text
+  toprecargasDeliveryId String?
+  deliveryAttempts      Int                @default(0)
+  lastDeliveryError     String?            @db.Text
+  deliveredAt           DateTime?
+  couponUsed            String?
+  couponId              String?
+  affiliateId           String?
+  userIp                String             @default("")
+  createdAt             DateTime           @default(now())
+  paidAt                DateTime?
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@map("toprecargas_orders")
 }

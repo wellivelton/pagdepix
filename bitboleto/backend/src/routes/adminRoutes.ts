@@ -56,7 +56,6 @@ export default function registerAdminRoutes(
   router.get('/admin/boletos', ...protectedRoute, admin.listAllBoletos);
   router.post('/admin/boleto/:id/approve', ...protectedRoute, upload.single('file'), admin.approveBoleto);
   router.post('/admin/boleto/:id/reject', ...protectedRoute, admin.rejectBoleto);
-  router.post('/admin/boleto/:id/pay-asaas', ...protectedRoute, h(admin.payBoletoViaAsaas, 'payBoletoViaAsaas'));
 
   // Lote de boletos (batch)
   router.get('/admin/boleto-batches', ...protectedRoute, h(admin.listBatches, 'listBatches'));
@@ -186,6 +185,7 @@ export default function registerAdminRoutes(
 
   router.get('/admin/wallet-config', ...protectedRoute, admin.getWalletConfig);
   router.put('/admin/wallet-config', ...protectedRoute, admin.updateWalletConfig);
+
 
   router.get('/affiliate/data', ...protectedRoute, affiliate.getAffiliateData);
 
@@ -884,4 +884,10 @@ export default function registerAdminRoutes(
   router.post('/admin/email/templates',          ...protectedRoute, h(ec.createTemplate,   'createTemplate'));
   router.put('/admin/email/templates/:id',       ...protectedRoute, h(ec.updateTemplate,   'updateTemplate'));
   router.delete('/admin/email/templates/:id',    ...protectedRoute, h(ec.deleteTemplate,   'deleteTemplate'));
+
+  // ─── SideSwap Refunds ──────────────────────────────────────────────────────
+  const sideswapAdmin = require('../controllers/sideswapAdminController');
+  router.get('/admin/sideswap/refunds',              ...protectedRoute, h(sideswapAdmin.listPendingRefunds,  'listPendingRefunds'));
+  router.post('/admin/sideswap/refund/:id/complete', ...protectedRoute, h(sideswapAdmin.completeRefund,     'completeRefund'));
+
 }

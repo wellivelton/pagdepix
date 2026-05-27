@@ -43,22 +43,22 @@ const FEATURES = [
 
 export default function FeaturesSection() {
   return (
-    <section className="py-12 md:py-20 lg:py-28">
+    <section className="py-8 md:py-12">
       <div className="max-w-7xl mx-auto px-4 md:px-6">
-        <div className="text-center mb-8 md:mb-14">
+        <div className="text-center mb-5 md:mb-8">
           <SectionLabel>Por que PagDepix</SectionLabel>
-          <h2 className="text-2xl md:text-4xl lg:text-5xl font-black text-white">
+          <h2 className="text-xl md:text-2xl font-black text-white">
             Feito para quem usa{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-bitcoin to-orange-400">
               cripto de verdade
             </span>
           </h2>
-          <p className="text-gray-400 text-sm md:text-base mt-3 md:mt-4 max-w-xl mx-auto">
+          <p className="text-gray-400 text-sm mt-2 max-w-xl mx-auto">
             Sem burocracia bancária. Sem centralização. Sem surpresas.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-5">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {FEATURES.map((f) => (
             <FeatureCard
               key={f.title}

@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { prisma } from '../prisma';
 
-export type WebhookSource = 'telegram' | 'geradepix' | 'velora';
+export type WebhookSource = 'telegram' | 'geradepix' | 'velora' | 'asaas_bill';
 
 export interface IdempotencyCheckResult {
   alreadyProcessed: boolean;

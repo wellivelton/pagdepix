@@ -6,9 +6,10 @@ import { apiKeyAuth } from '../middlewares/apiKeyAuth';
 import { apiRateLimiter, apiRequestLogger } from '../middlewares/apiRateLimiter';
 import { prisma } from '../prisma';
 import { createBoleto, calculateFee } from '../services/createBoleto';
+import { parseBarcodeAmount } from '../services/billPayment';
 import { updateBoletoTxid, checkBoletoStatus } from '../services/updateBoletoTxid';
 import {
-  MOBILE_OPERATORS,
+  listMobileOperators,
   createRecharge,
   calculateRechargeWithCoupon,
   getRechargeById,
@@ -94,7 +95,7 @@ router.post('/boleto/calculate', async (req: Request, res: Response) => {
 // ========================================
 router.post('/boleto/create', async (req: Request, res: Response) => {
   try {
-    const { amount, barcode, pdfUrl, pdfPassword, dueDate, paymentCurrency, externalRef } = req.body;
+    const { amount, barcode, digitableLine, pdfUrl, pdfPassword, dueDate, paymentCurrency, externalRef } = req.body;
     const apiKey = req.apiKey!;
 
     if (!amount || isNaN(Number(amount))) {
@@ -102,6 +103,20 @@ router.post('/boleto/create', async (req: Request, res: Response) => {
     }
     if (!dueDate) {
       return res.status(400).json({ error: 'dueDate is required (ISO 8601)' });
+    }
+
+    // Validate barcode or digitableLine if provided
+    if (barcode) {
+      const parsed = parseBarcodeAmount(String(barcode));
+      if (parsed === null) {
+        return res.status(400).json({ error: 'barcode inválido ou não reconhecido.' });
+      }
+    }
+    if (digitableLine && !barcode) {
+      const parsed = parseBarcodeAmount(String(digitableLine));
+      if (parsed === null) {
+        return res.status(400).json({ error: 'digitableLine inválida ou não reconhecida.' });
+      }
     }
 
     const affiliate = await prisma.affiliate.findUnique({
@@ -115,6 +130,7 @@ router.post('/boleto/create', async (req: Request, res: Response) => {
     const result = await createBoleto({
       userId: affiliate.userId,
       barcode,
+      digitableLine: digitableLine || undefined,
       pdfUrl,
       pdfPassword,
       amount: Number(amount),
@@ -280,8 +296,9 @@ router.get('/boleto/:id/status', async (req: Request, res: Response) => {
 // ========================================
 // GET /recharge/operators — Lista operadoras
 // ========================================
-router.get('/recharge/operators', (_req: Request, res: Response) => {
-  return res.json(MOBILE_OPERATORS);
+router.get('/recharge/operators', async (_req: Request, res: Response) => {
+  const operators = await listMobileOperators();
+  return res.json(operators);
 });
 
 // ========================================

@@ -19,7 +19,8 @@ import { startSyncSendPixOrders } from './jobs/syncSendPixOrders';
 import { startWebhookRetryWorker } from './services/webhookService';
 import { startSyncLiquidPayments } from './jobs/syncLiquidPayments';
 import { resetApiEndUserDailyLimits, resetApiEndUserMonthlyLimits } from './jobs/resetApiEndUserLimits';
-import { startSyncAsaasRecharges } from './jobs/syncAsaasRecharges';
+import { startRetrySideswapBroadcast } from './jobs/retrySideswapBroadcast';
+import { startSyncToprecargasProducts } from './jobs/syncToprecargasProducts';
 
 // Logar erros não capturados para diagnóstico
 process.on('uncaughtException', (err) => {
@@ -152,7 +153,8 @@ app.listen(PORT, () => {
   startSyncSendPixOrders();
   startWebhookRetryWorker();
   startSyncLiquidPayments();
-  startSyncAsaasRecharges();
+  startRetrySideswapBroadcast();
+  startSyncToprecargasProducts();
 
   // Reset diário de limites por usuário final (às 00:05, via verificação horária)
   const scheduleResets = () => {

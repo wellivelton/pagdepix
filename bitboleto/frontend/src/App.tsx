@@ -9,8 +9,8 @@ import Landing from './pages/Landing';
 import api from './services/api';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
-import PayBoleto from './pages/PayBoleto';
 import RecargaCelular from './pages/RecargaCelular';
+import PayBoleto from './pages/PayBoleto';
 import EnviarPix from './pages/EnviarPix';
 import AreaPix from './pages/AreaPix';
 import PixCopiaCola from './pages/PixCopiaCola';
@@ -48,18 +48,19 @@ import ComercioApi from './pages/comercio/ComercioApi';
 import Maintenance from './pages/Maintenance';
 import PayLink from './pages/PayLink';
 import PayPage from './pages/PayPage';
-// CONSUMER_DISABLED — descomentar quando área de consumidor estiver pronta
-// import Marketplace from './pages/marketplace/Marketplace';
-// import ProductDetail from './pages/marketplace/ProductDetail';
-// import Checkout from './pages/marketplace/Checkout';
-// import Cart from './pages/marketplace/Cart';
-// import CheckoutCart from './pages/marketplace/CheckoutCart';
-// import MyPurchases from './pages/marketplace/MyPurchases';
-// import OrderDetail from './pages/marketplace/OrderDetail';
-// import MarketplaceNotifications from './pages/marketplace/MarketplaceNotifications';
-// import Wishlist from './pages/marketplace/Wishlist';
+import Marketplace from './pages/marketplace/Marketplace';
+import ProductDetail from './pages/marketplace/ProductDetail';
+import Checkout from './pages/marketplace/Checkout';
+import Cart from './pages/marketplace/Cart';
+import CheckoutCart from './pages/marketplace/CheckoutCart';
+import MyPurchases from './pages/marketplace/MyPurchases';
+import OrderDetail from './pages/marketplace/OrderDetail';
+import MarketplaceNotifications from './pages/marketplace/MarketplaceNotifications';
+import Wishlist from './pages/marketplace/Wishlist';
 import SellerPage from './pages/marketplace/SellerPage';
 import PublicStorePage from './pages/marketplace/PublicStorePage';
+import Swap from './pages/Swap';
+import PagamentoConta from './pages/PagamentoConta';
 
 function MaintenanceGuard({ children }: { children: React.ReactNode }) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -194,7 +195,6 @@ export default function App() {
         <Route path="/afiliados" element={<Afiliados />} />
         <Route path="/pay/:slug" element={<PayLink />} />
         <Route path="/page/:slug" element={<PayPage />} />
-        {/* CONSUMER_DISABLED — descomentar quando área de consumidor estiver pronta
         <Route path="/loja" element={<ProtectedRoute><Dashboard><Marketplace /></Dashboard></ProtectedRoute>} />
         <Route path="/loja/produto/:slug" element={<ProtectedRoute><Dashboard><ProductDetail /></Dashboard></ProtectedRoute>} />
         <Route path="/loja/checkout/:productId" element={<ProtectedRoute><Dashboard><Checkout /></Dashboard></ProtectedRoute>} />
@@ -204,7 +204,16 @@ export default function App() {
         <Route path="/minhas-compras" element={<ProtectedRoute><Dashboard><MyPurchases /></Dashboard></ProtectedRoute>} />
         <Route path="/minhas-compras/:orderId" element={<ProtectedRoute><Dashboard><OrderDetail /></Dashboard></ProtectedRoute>} />
         <Route path="/loja/notificacoes" element={<ProtectedRoute><Dashboard><MarketplaceNotifications /></Dashboard></ProtectedRoute>} />
-        */}
+        <Route
+          path="/swap"
+          element={
+            <ProtectedRoute>
+              <Dashboard>
+                <Swap />
+              </Dashboard>
+            </ProtectedRoute>
+          }
+        />
         <Route path="/loja/vendedor/:sellerId" element={<SellerPage />} />
         <Route path="/loja/:storeSlug" element={<PublicStorePage />} />
         {/* Landing B2B Modo Comércio — canal principal de aquisição */}
@@ -235,25 +244,36 @@ export default function App() {
             </ProtectedRoute>
           } 
         />
-        <Route 
-          path="/pagar" 
-          element={
-            <ProtectedRoute>
-              <Dashboard>
-                <PayBoleto />
-              </Dashboard>
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/recarga" 
+        <Route
+          path="/recarga"
           element={
             <ProtectedRoute>
               <Dashboard>
                 <RecargaCelular />
               </Dashboard>
             </ProtectedRoute>
-          } 
+          }
+        />
+        <Route path="/tv" element={<Navigate to="/loja" replace />} />
+        <Route
+          path="/pagar"
+          element={
+            <ProtectedRoute>
+              <Dashboard>
+                <PayBoleto />
+              </Dashboard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pagar-conta"
+          element={
+            <ProtectedRoute>
+              <Dashboard>
+                <PagamentoConta />
+              </Dashboard>
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/area-pix"

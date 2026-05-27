@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Check, Share2, Copy, Users, TrendingUp, CheckCircle2 } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Check, Share2, Copy, Users, TrendingUp, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import api from '../../services/api';
 
 interface ReferralInfo {
@@ -20,14 +20,60 @@ const BENEFITS = [
 
 export default function IndicacaoCard() {
   const [info, setInfo] = useState<ReferralInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
-  useEffect(() => {
+  const fetchReferral = useCallback(() => {
+    setLoading(true);
+    setError(false);
     api.get('/user/referral')
-      .then(({ data }) => setInfo(data))
-      .catch(() => {});
+      .then(({ data }) => { setInfo(data); setLoading(false); })
+      .catch(() => { setError(true); setLoading(false); });
   }, []);
+
+  useEffect(() => { fetchReferral(); }, [fetchReferral]);
+
+  if (loading) {
+    return (
+      <div className="bg-app-surface border border-app-stroke rounded-xl shadow-card-premium h-full flex flex-col overflow-hidden animate-pulse">
+        <div className="px-4 pt-4 pb-4 flex-shrink-0" style={{ borderBottom: '1px solid rgba(247,147,26,0.12)' }}>
+          <div className="h-4 w-24 bg-app-elevated rounded mb-1" />
+          <div className="h-3 w-40 bg-app-elevated rounded" />
+        </div>
+        <div className="flex flex-col flex-1 px-4 pt-3 pb-4 gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="h-12 bg-app-elevated rounded-lg" />
+            <div className="h-12 bg-app-elevated rounded-lg" />
+          </div>
+          <div className="space-y-1.5">
+            {[1,2,3].map(i => <div key={i} className="h-3 bg-app-elevated rounded" />)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-app-surface border border-app-stroke rounded-xl shadow-card-premium h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
+        <AlertCircle className="w-8 h-8 text-app-subtle" />
+        <div>
+          <p className="text-sm font-semibold text-app-text mb-1">Falha ao carregar indicações</p>
+          <p className="text-xs text-app-subtle">Verifique sua conexão e tente novamente.</p>
+        </div>
+        <button
+          type="button"
+          onClick={fetchReferral}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-app-elevated border border-app-stroke text-app-muted hover:text-app-text transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-bitcoin/50"
+        >
+          <RefreshCw className="w-3 h-3" />
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
 
   if (!info) return null;
 

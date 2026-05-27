@@ -265,6 +265,41 @@ export async function notifyPixConfirmed(
 }
 
 /**
+ * Envia notificação de swap concluído.
+ */
+export async function notifySwapCompleted(
+  userId: string,
+  depositAsset: string,
+  settleAsset: string,
+  settleAmount: string,
+): Promise<void> {
+  const frontendUrl = process.env.FRONTEND_URL || 'https://pagdepix.com';
+  await sendNotification(userId, {
+    title: '⚡ Swap concluído!',
+    body: `${depositAsset} → ${settleAsset}: você recebeu ${settleAmount} ${settleAsset}.`,
+    link: `${frontendUrl}/swap`,
+    tag: 'swap-completed',
+  });
+}
+
+/**
+ * Envia notificação de swap com falha.
+ */
+export async function notifySwapFailed(
+  userId: string,
+  depositAsset: string,
+  settleAsset: string,
+): Promise<void> {
+  const frontendUrl = process.env.FRONTEND_URL || 'https://pagdepix.com';
+  await sendNotification(userId, {
+    title: '❌ Swap falhou',
+    body: `Swap ${depositAsset} → ${settleAsset} não pôde ser executado. Verifique o app.`,
+    link: `${frontendUrl}/swap`,
+    tag: 'swap-failed',
+  });
+}
+
+/**
  * Envia notificação de saque processado.
  */
 export async function notifyWithdrawalProcessed(

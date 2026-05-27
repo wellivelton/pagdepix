@@ -158,7 +158,7 @@ import {
   adminMarkRechargePaid,
   adminApproveRechargeWithReceipt,
   adminRejectRecharge,
-  MOBILE_OPERATORS,
+  listMobileOperators,
   calculateRechargeFee,
   calculateRechargeWithCoupon
 } from '../services/mobileRecharge';
@@ -177,7 +177,7 @@ import {
 } from '../services/pixCopiaCola';
 import { veloraDecodePixCode } from '../services/velora.service';
 import { ensureIdempotent, updateResult } from '../services/webhookIdempotency.service';
-import { asaasDecodePixCode } from '../services/asaas.service';
+import { asaasDecodePixCode, asaasSimulateBill } from '../services/asaas.service';
 import { getMaintenanceStatusPublic, getAdminMaintenance, setMaintenance } from '../controllers/maintenanceController';
 import { dispatchWebhook } from '../services/webhookService';
 // import { generateDepixQr, getDepixOrderStatus, getDepixTransactions, PAGDEPIX_FEE_PERCENT, SWAPVERSE_FEE_PERCENT, DEPIX_MARGIN_PERCENT, DEPIX_FIXED_FEE } from '../services/swapverse'; // DESATIVADO: compra de DePix removida
@@ -185,6 +185,9 @@ import registerAdminRoutes from './adminRoutes';
 import registerMarketplaceRoutes from './marketplaceRoutes';
 import commerceApiRoutes from './commerceApiRoutes';
 import gatewayRoutes from './gatewayRoutes';
+import sideShiftRoutes from './sideShiftRoutes';
+import sideswapRoutes from './sideswapRoutes';
+import billPaymentRoutes from './billPaymentRoutes';
 import { prisma } from '../prisma';
 import {
   createCommerceApiKey,
@@ -368,6 +371,126 @@ router.post('/webhook/telegram', webhookRateLimiter, telegramWebhook);
 
 // Webhook GeraDePix (público; chamado pela API GeraDePix - saques Depix→Pix)
 router.post('/webhook/geradepix', webhookRateLimiter, geradepixWebhook);
+
+// Webhook Asaas — Pague Contas (BILL_PAID, BILL_CANCELLED, BILL_FAILED, etc.)
+router.post('/webhook/asaas/bill', webhookRateLimiter, async (req: any, res) => {
+  const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
+
+  // Token obrigatório em produção — rejeitar se não configurado
+  if (!expectedToken) {
+    console.error('[ASAAS-BILL-WEBHOOK] ASAAS_WEBHOOK_TOKEN não configurado. Rejeitando.');
+    return res.status(401).json({ error: 'Webhook não configurado.' });
+  }
+
+  // Asaas envia o token no query param ?accessToken= ou no header asaas-access-token
+  const receivedToken =
+    (req.query.accessToken as string | undefined) ||
+    (req.headers['asaas-access-token'] as string | undefined);
+
+  if (!receivedToken || receivedToken !== expectedToken) {
+    console.warn('[ASAAS-BILL-WEBHOOK] Token inválido ou ausente.');
+    return res.status(401).json({ error: 'Token inválido.' });
+  }
+
+  try {
+    const body = req.body as any;
+    const event: string = body?.event || '';
+    const bill = body?.bill as any;
+    const billId: string = bill?.id || '';
+
+    if (!billId || !event) return res.status(200).json({ ok: true });
+
+    // Idempotência: usar billId + event como chave
+    const idResult = await ensureIdempotent({
+      source: 'asaas_bill',
+      eventType: event,
+      externalId: billId,
+      payload: body,
+    });
+    if (idResult.alreadyProcessed) {
+      console.log(`[ASAAS-BILL-WEBHOOK] Duplicado ${event}/${billId} — ignorando`);
+      return res.status(200).json({ ok: true, duplicate: true });
+    }
+
+    // Responde 200 imediatamente antes de processar (padrão webhook)
+    res.status(200).json({ ok: true });
+
+    const boletoRecord = await prisma.boleto.findFirst({
+      where: { asaasPaymentId: billId },
+      include: { user: { select: { id: true } } },
+    });
+
+    if (!boletoRecord) {
+      // Pode ser recarga — verificar em mobileRecharge
+      await updateResult({ source: 'asaas_bill', eventType: event, externalId: billId, result: 'ok' }).catch(() => {});
+      console.log(`[ASAAS-BILL-WEBHOOK] Bill ${billId} não encontrado em boletos`);
+      return;
+    }
+
+    console.log(`[ASAAS-BILL-WEBHOOK] ${event} → boleto ${boletoRecord.id}`);
+
+    const { notifyAdmin } = await import('../services/telegram.service');
+    const { sendNotification } = await import('../services/push.service');
+
+    if (event === 'BILL_PAID') {
+      const receiptUrl: string | null = bill?.transactionReceiptUrl || null;
+      await prisma.boleto.update({
+        where: { id: boletoRecord.id },
+        data: {
+          status: 'PAID',
+          confirmedAt: new Date(),
+          ...(receiptUrl ? { receiptUrl } : {}),
+        },
+      });
+      sendNotification(boletoRecord.user.id, {
+        title: '✅ Boleto pago!',
+        body: `Seu boleto de R$ ${Number(boletoRecord.totalAmount).toFixed(2)} foi pago com sucesso.`,
+        link: `${process.env.FRONTEND_URL || 'https://pagdepix.com'}/historico`,
+        tag: 'boleto-paid',
+      }).catch(() => {});
+      notifyAdmin(
+        `✅ *Boleto confirmado via webhook Asaas*\n` +
+        `Boleto ID: \`${boletoRecord.id.slice(0, 8)}\`\n` +
+        `Asaas Bill: \`${billId}\`\n` +
+        `Valor: R$ ${Number(boletoRecord.totalAmount).toFixed(2)}\n` +
+        `${receiptUrl ? `Comprovante: ${receiptUrl}` : ''}`
+      ).catch(() => {});
+    } else if (event === 'BILL_CANCELLED' || event === 'BILL_FAILED') {
+      const failReason = bill?.failReasons || event;
+      await prisma.boleto.update({
+        where: { id: boletoRecord.id },
+        data: {
+          status: 'PROBLEM',
+          problemReason: `Asaas: ${failReason}`,
+        },
+      });
+      sendNotification(boletoRecord.user.id, {
+        title: '⚠️ Problema no pagamento',
+        body: `Houve um problema no pagamento do seu boleto. Entre em contato com o suporte.`,
+        link: `${process.env.FRONTEND_URL || 'https://pagdepix.com'}/historico`,
+        tag: 'boleto-problem',
+      }).catch(() => {});
+      notifyAdmin(
+        `❌ *Boleto ${event === 'BILL_FAILED' ? 'falhou' : 'cancelado'} no Asaas*\n` +
+        `Boleto ID: \`${boletoRecord.id.slice(0, 8)}\`\n` +
+        `Asaas Bill: \`${billId}\`\n` +
+        `Valor: R$ ${Number(boletoRecord.totalAmount).toFixed(2)}\n` +
+        `Motivo: ${failReason}`
+      ).catch(() => {});
+    } else if (event === 'BILL_REFUNDED') {
+      notifyAdmin(
+        `↩️ *Boleto estornado no Asaas*\n` +
+        `Boleto ID: \`${boletoRecord.id.slice(0, 8)}\`\n` +
+        `Asaas Bill: \`${billId}\`\n` +
+        `Valor: R$ ${Number(boletoRecord.totalAmount).toFixed(2)}`
+      ).catch(() => {});
+    }
+    // BILL_PENDING / BILL_BANK_PROCESSING — apenas log, sem ação
+    await updateResult({ source: 'asaas_bill', eventType: event, externalId: billId, result: 'ok' }).catch(() => {});
+  } catch (err) {
+    console.error('[ASAAS-BILL-WEBHOOK] Erro:', err);
+  }
+});
 
 // Status do modo manutenção (público - para frontend exibir tela de manutenção)
 router.get('/maintenance/status', getMaintenanceStatusPublic);
@@ -557,6 +680,114 @@ router.post('/notifications/:id/click', ...protectedRoute, recordClick);
 router.get('/user/profile', ...protectedRoute, getProfile);
 router.get('/user/referral', ...protectedRoute, getReferralInfo);
 router.put('/user/profile', ...protectedAndVerifiedRoute, updateProfile);
+
+// Stats agregadas para o dashboard (substitui 4 chamadas separadas no frontend)
+router.get('/user/stats', ...protectedRoute, async (req: any, res) => {
+  try {
+    const userId: string = req.userId;
+    const raw = req.query.period as string;
+    const period = (['7d', '30d', '90d', 'all'] as const).find(p => p === raw) ?? 'all';
+
+    const days = period === '7d' ? 7 : period === '30d' ? 30 : period === '90d' ? 90 : null;
+    const since = days ? new Date(Date.now() - days * 86_400_000) : undefined;
+    const dateFilter = since ? { gte: since } : undefined;
+
+    // Totais agregados em paralelo
+    const [boletoAgg, rechargeAgg, pixAgg, sendPixAgg] = await Promise.all([
+      prisma.boleto.aggregate({
+        _sum: { amount: true },
+        where: { userId, status: 'PAID', ...(dateFilter ? { createdAt: dateFilter } : {}) },
+      }),
+      prisma.mobileRecharge.aggregate({
+        _sum: { amount: true },
+        where: { userId, status: 'PAID', ...(dateFilter ? { createdAt: dateFilter } : {}) },
+      }),
+      prisma.pixCopiaCola.aggregate({
+        _sum: { valorOriginal: true },
+        where: { userId, status: 'APPROVED', ...(dateFilter ? { createdAt: dateFilter } : {}) },
+      }),
+      prisma.sendPixOrder.aggregate({
+        _sum: { amountBrl: true },
+        where: { userId, status: 'COMPLETED', ...(dateFilter ? { createdAt: dateFilter } : {}) },
+      }),
+    ]);
+
+    const breakdown = {
+      boletos:  boletoAgg._sum.amount                                             ?? 0,
+      recargas: rechargeAgg._sum.amount                                           ?? 0,
+      pix:      Number(pixAgg._sum.valorOriginal ?? 0) + (sendPixAgg._sum.amountBrl ?? 0),
+    };
+    const total = breakdown.boletos + breakdown.recargas + breakdown.pix;
+
+    // Transações recentes (últimas 7 de cada tipo, merge, top 7 por data)
+    const [rBoletos, rRecargas, rPix, rSendPix] = await Promise.all([
+      prisma.boleto.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 7,
+        select: { id: true, status: true, amount: true, createdAt: true },
+      }),
+      prisma.mobileRecharge.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 7,
+        select: { id: true, status: true, amount: true, createdAt: true, operator: true },
+      }),
+      prisma.pixCopiaCola.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 7,
+        select: { id: true, status: true, valorOriginal: true, createdAt: true },
+      }),
+      prisma.sendPixOrder.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 7,
+        select: { id: true, status: true, amountBrl: true, createdAt: true },
+      }),
+    ]);
+
+    const recentTxs = [
+      ...rBoletos.map(b => ({ id: b.id, type: 'boleto',    label: 'Boleto',                                     amount: b.amount,             status: b.status, createdAt: b.createdAt })),
+      ...rRecargas.map(r => ({ id: r.id, type: 'recharge',  label: r.operator ? `Recarga ${r.operator}` : 'Recarga', amount: r.amount,          status: r.status, createdAt: r.createdAt })),
+      ...rPix.map(p =>      ({ id: p.id, type: 'pix',       label: 'Pix Copia e Cola',                           amount: Number(p.valorOriginal), status: p.status, createdAt: p.createdAt })),
+      ...rSendPix.map(s =>  ({ id: s.id, type: 'send-pix',  label: 'Envio Pix',                                  amount: s.amountBrl,           status: s.status, createdAt: s.createdAt })),
+    ]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 7)
+      .map(t => ({ ...t, createdAt: t.createdAt.toISOString() }));
+
+    // Sparkline: buckets de volume pago no período (máx. 90d para "all")
+    const sparkSince = since ?? new Date(Date.now() - 90 * 86_400_000);
+    const bucketCount = period === '7d' ? 7 : 15;
+    const spanMs = Date.now() - sparkSince.getTime();
+    const bucketMs = spanMs / bucketCount;
+
+    const [sBoletos, sRecargas, sPix, sSendPix] = await Promise.all([
+      prisma.boleto.findMany({ where: { userId, status: 'PAID', createdAt: { gte: sparkSince } }, select: { amount: true, createdAt: true } }),
+      prisma.mobileRecharge.findMany({ where: { userId, status: 'PAID', createdAt: { gte: sparkSince } }, select: { amount: true, createdAt: true } }),
+      prisma.pixCopiaCola.findMany({ where: { userId, status: 'APPROVED', createdAt: { gte: sparkSince } }, select: { valorOriginal: true, createdAt: true } }),
+      prisma.sendPixOrder.findMany({ where: { userId, status: 'COMPLETED', createdAt: { gte: sparkSince } }, select: { amountBrl: true, createdAt: true } }),
+    ]);
+
+    const buckets = new Array<number>(bucketCount).fill(0);
+    const allPaid = [
+      ...sBoletos.map(b => ({ amount: b.amount,              createdAt: b.createdAt })),
+      ...sRecargas.map(r => ({ amount: r.amount,             createdAt: r.createdAt })),
+      ...sPix.map(p =>      ({ amount: Number(p.valorOriginal), createdAt: p.createdAt })),
+      ...sSendPix.map(s =>  ({ amount: s.amountBrl,          createdAt: s.createdAt })),
+    ];
+    for (const tx of allPaid) {
+      const idx = Math.min(Math.floor((tx.createdAt.getTime() - sparkSince.getTime()) / bucketMs), bucketCount - 1);
+      if (idx >= 0) buckets[idx] += tx.amount;
+    }
+
+    return res.json({ total, breakdown, recentTxs, sparkline: buckets });
+  } catch (err) {
+    console.error('[user/stats]', err);
+    return res.status(500).json({ error: 'Erro interno' });
+  }
+});
 router.put('/user/change-password', ...protectedAndVerifiedRoute, changePassword);
 // router.put('/user/depix-wallet', ...protectedKyc2Route, saveDepixWallet); // DESATIVADO: compra de DePix removida
 
@@ -638,15 +869,17 @@ router.post('/boleto/decode', ...protectedAndVerifiedRoute, async (req: any, res
   if (digits.length < 44) {
     return res.status(400).json({ error: 'Código inválido (mínimo 44 dígitos).' });
   }
-  const { asaasIsConfigured: isConfigured, asaasSimulateBill } = require('../services/asaas.service');
-  if (!isConfigured()) {
-    return res.status(503).json({ error: 'Decodificação indisponível.' });
+
+  try {
+    const result = await asaasSimulateBill(digits);
+    if (!result.success) {
+      return res.status(422).json({ error: result.error ?? 'Boleto inválido ou não suportado.' });
+    }
+    return res.status(200).json(result.bill);
+  } catch (err) {
+    console.error('[decode] Erro:', err);
+    return res.status(503).json({ error: 'Serviço de decodificação temporariamente indisponível.' });
   }
-  const result = await asaasSimulateBill(barcode);
-  if (!result.success) {
-    return res.status(422).json({ error: result.error || 'Não foi possível identificar o boleto. Verifique o código digitado.' });
-  }
-  return res.status(200).json(result.bill);
 });
 
 // Calcular taxa (preview) - Rota protegida para usuários autenticados (requer verificação)
@@ -930,38 +1163,14 @@ router.get('/boleto/batch/:id', ...protectedAndVerifiedRoute, async (req: any, r
 // ========================================
 // RECARGA DE CELULAR
 // ========================================
-router.get('/recharge/operators', (_req, res) => {
-  const list = Array.isArray(MOBILE_OPERATORS) ? MOBILE_OPERATORS : [];
-  return res.json({ operators: list });
+router.get('/recharge/operators', async (_req, res) => {
+  const operators = await listMobileOperators();
+  return res.json({ operators });
 });
 
-router.get('/recharge/provider/:phoneNumber', ...protectedAndVerifiedRoute, async (req: any, res) => {
-  try {
-    const { asaasIsConfigured: isConfigured, asaasGetProvider } = require('../services/asaas.service');
-    if (!isConfigured()) {
-      return res.status(503).json({ error: 'Detecção automática não disponível.' });
-    }
-    const phone = (req.params.phoneNumber ?? '').replace(/\D/g, '').replace(/^55/, '');
-    if (phone.length !== 11) {
-      return res.status(400).json({ error: 'Número inválido. Informe DDD + 9 dígitos.' });
-    }
-    const result = await asaasGetProvider(phone);
-    if (!result.success) {
-      return res.status(404).json({ error: result.error });
-    }
-    const values = (result.values ?? [])
-      .map((v: any) => ({
-        name: v.name,
-        amount: v.maxValue,
-        bonus: v.bonus,
-        description: v.description ?? null,
-      }))
-      .filter((v: any) => typeof v.amount === 'number' && v.amount >= 20);
-    return res.json({ name: result.name, values });
-  } catch (err) {
-    console.error('[provider] Erro ao detectar operadora:', err);
-    return res.status(500).json({ error: 'Erro ao detectar operadora.' });
-  }
+router.get('/recharge/provider/:phoneNumber', ...protectedAndVerifiedRoute, (_req: any, res) => {
+  // RV Hub não oferece detecção de operadora por número — frontend usa dropdown.
+  return res.status(503).json({ error: 'Detecção automática de operadora não disponível.' });
 });
 
 router.post('/recharge/calculate', ...protectedAndVerifiedRoute, async (req: any, res) => {
@@ -1159,9 +1368,6 @@ router.post('/admin/recharge/:id/paid', ...protectedAdminRoute, async (req: any,
     if (req.userRole !== 'ADMIN') return res.status(403).json({ error: 'Acesso negado' });
     const result = await adminMarkRechargePaid(req.params.id);
     if (!result.success) return res.status(400).json({ error: result.error });
-    if ((result as any).asaasPending) {
-      return res.json({ message: 'Recarga enviada ao Asaas. Aguardando confirmação da operadora.', recharge: result.recharge });
-    }
     return res.json({ message: 'Recarga marcada como paga.', recharge: result.recharge });
   } catch (error) {
     console.error('Erro ao marcar recarga como paga:', error);
@@ -1179,9 +1385,6 @@ router.post('/admin/recharge/:id/approve', ...protectedAdminRoute, uploadRecharg
     const receiptUrl = req.file ? `${baseUrl}/uploads/recharges/${req.file.filename}` : undefined;
     const result = await adminApproveRechargeWithReceipt(rechargeId, receiptUrl);
     if (!result.success) return res.status(400).json({ error: result.error });
-    if ((result as any).asaasPending) {
-      return res.json({ message: 'Recarga enviada ao Asaas. Aguardando confirmação da operadora.', recharge: result.recharge });
-    }
     // Notificações já disparadas dentro de finalizeApprovedRecharge (Telegram + push + webhook)
     return res.json({ message: 'Recarga aprovada com sucesso.', recharge: result.recharge });
   } catch (error: any) {
@@ -1661,6 +1864,9 @@ router.use('/commerce/api', commerceApiRoutes);
 
 // API Gateway (cobranças Pix com liquidação D+1 para integração em sites/apps)
 router.use('/gateway', gatewayRoutes);
+router.use('/sideshift', sideShiftRoutes);
+router.use('/sideswap', sideswapRoutes);
+router.use('/bill-payments', billPaymentRoutes);
 
 // Helper: localiza ou cria automaticamente um CommercePartner para usuários ADMIN.
 // Trata race condition: quando duas requisições paralelas tentam criar o mesmo registro,
@@ -1921,5 +2127,75 @@ router.get('/feed', ...protectedRoute, async (req: any, res) => {
     return res.json({ items: [], fetchedAt: new Date().toISOString() });
   }
 });
+
+// ========================================
+// TOPRECARGAS — INTEGRAÇÃO B2B
+// ========================================
+{
+  const {
+    listToprecargasProducts,
+    createToprecargasOrder,
+    listToprecargasOrders,
+    getToprecargasOrderById,
+  } = require('../services/toprecargasService');
+
+  // Público — lista produtos disponíveis
+  router.get('/toprecargas/products', async (_req, res) => {
+    try {
+      const products = await listToprecargasProducts();
+      return res.json({ products });
+    } catch (err) {
+      console.error('[Toprecargas] listProducts error:', err);
+      return res.json({ products: [] });
+    }
+  });
+
+  // Criar pedido (KYC 1 exigido)
+  router.post('/toprecargas/order', ...protectedAndVerifiedRoute, async (req: any, res) => {
+    const userId: string = req.userId;
+    const { externalProductId, paymentCurrency = 'DEPIX' } = req.body;
+    const userIp: string = req.ip || req.headers['x-forwarded-for'] as string || '';
+
+    if (!externalProductId || typeof externalProductId !== 'number') {
+      return res.status(400).json({ error: 'externalProductId obrigatório (número).' });
+    }
+    const validCurrencies = ['DEPIX', 'USDT', 'BTC'];
+    if (!validCurrencies.includes(paymentCurrency)) {
+      return res.status(400).json({ error: 'Moeda inválida. Use DEPIX, USDT ou BTC.' });
+    }
+
+    try {
+      const result = await createToprecargasOrder({ userId, externalProductId, paymentCurrency, userIp });
+      if (!result.success) return res.status(409).json({ error: result.error });
+      return res.status(201).json({ order: result.order });
+    } catch (err) {
+      console.error('[Toprecargas] createOrder error:', err);
+      return res.status(500).json({ error: 'Erro interno ao criar pedido.' });
+    }
+  });
+
+  // Listar pedidos do usuário
+  router.get('/toprecargas/orders', ...protectedRoute, async (req: any, res) => {
+    try {
+      const orders = await listToprecargasOrders(req.userId);
+      return res.json({ orders });
+    } catch (err) {
+      console.error('[Toprecargas] listOrders error:', err);
+      return res.status(500).json({ error: 'Erro interno.' });
+    }
+  });
+
+  // Status de um pedido
+  router.get('/toprecargas/order/:id', ...protectedRoute, async (req: any, res) => {
+    try {
+      const order = await getToprecargasOrderById(req.params.id, req.userId);
+      if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+      return res.json({ order });
+    } catch (err) {
+      console.error('[Toprecargas] getOrder error:', err);
+      return res.status(500).json({ error: 'Erro interno.' });
+    }
+  });
+}
 
 export default router;

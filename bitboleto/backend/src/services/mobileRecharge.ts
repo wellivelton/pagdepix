@@ -3,7 +3,6 @@ import { validateCouponUsage, isUserVerified } from '../utils/antifraud';
 import { getSafeErrorMessage } from '../utils/safeError';
 import { getRates, convertBrlToUsdt, convertBrlToSats } from './exchangeRate';
 import { REFERRAL_RATE } from '../utils/taxConfig';
-import { asaasIsConfigured, asaasCreateRecharge } from './asaas.service';
 import { isXpubConfigured, getNextAddressIndex, deriveLiquidAddress } from './liquidHdWallet.service';
 import { env } from '../config/env';
 
@@ -23,13 +22,16 @@ export interface MobileOperator {
   values: number[];
 }
 
-export const MOBILE_OPERATORS: MobileOperator[] = [
-  { id: 'Vivo', name: 'Vivo', values: [20, 25, 30, 35, 40, 50, 100, 200, 300] },
-  { id: 'Claro', name: 'Claro', values: [20, 25, 30, 35, 40, 50, 100, 200, 300] },
-  { id: 'TIM', name: 'TIM', values: [20, 30, 40, 50, 60, 100] },
-  { id: 'Correios Celular', name: 'Correios Celular', values: [20, 30, 45, 55, 75, 120, 150, 180, 225] },
-  { id: 'Surf Telecom', name: 'Surf Telecom', values: [25, 30, 40, 50, 75, 180] },
+const STATIC_OPERATORS: MobileOperator[] = [
+  { id: 'Vivo', name: 'Vivo', values: [10, 15, 20, 30] },
+  { id: 'Claro', name: 'Claro', values: [10, 13, 20, 30] },
+  { id: 'TIM', name: 'TIM', values: [10, 15, 20, 30] },
+  { id: 'Oi', name: 'Oi', values: [10, 15, 20, 30] },
 ];
+
+export async function listMobileOperators(): Promise<MobileOperator[]> {
+  return STATIC_OPERATORS;
+}
 
 // DDDs válidos no Brasil (11-19, 21-28, 31-38, 41-49, 51-59, 61-69, 71-79, 81-89, 91-99, exceto alguns não utilizados)
 const VALID_DDDS = new Set([
@@ -81,24 +83,26 @@ export function validatePhone(input: string): { valid: boolean; error?: string }
   return { valid: true };
 }
 
-export function getOperatorById(id: string): MobileOperator | null {
-  return MOBILE_OPERATORS.find((op) => op.id === id) || null;
+export async function getOperatorById(id: string): Promise<MobileOperator | null> {
+  const operators = await listMobileOperators();
+  return operators.find((op) => op.id === id) ?? null;
 }
 
-export function validateOperatorAndAmount(operatorId: string, amount: number, asaasMode = false): { valid: boolean; error?: string } {
+export async function validateOperatorAndAmount(
+  operatorId: string,
+  amount: number,
+): Promise<{ valid: boolean; error?: string }> {
   if (!Number.isFinite(amount) || amount <= 0) {
     return { valid: false, error: 'Valor inválido.' };
   }
-  if (amount < 20) {
-    return { valid: false, error: 'Valor mínimo para recarga: R$ 20,00.' };
+  if (amount < 10) {
+    return { valid: false, error: 'Valor mínimo para recarga: R$ 10,00.' };
   }
-  const op = getOperatorById(operatorId);
+  const op = await getOperatorById(operatorId);
   if (!op) {
-    // Operadora desconhecida permitida quando Asaas valida na execução
-    if (asaasMode) return { valid: true };
     return { valid: false, error: 'Operadora inválida.' };
   }
-  if (!asaasMode && !op.values.includes(amount)) {
+  if (!op.values.includes(amount)) {
     return { valid: false, error: `Valores permitidos para ${op.name}: R$ ${op.values.join(', R$ ')}.` };
   }
   return { valid: true };
@@ -126,8 +130,8 @@ export async function calculateRechargeWithCoupon(
   exchangeRate?: number | null;
   cryptoAmount?: string | null;
 }> {
-  if (amount < 20 || !Number.isFinite(amount)) {
-    return { isValid: false, error: 'Valor inválido. Mínimo R$ 20,00.' };
+  if (amount < 10 || !Number.isFinite(amount)) {
+    return { isValid: false, error: 'Valor inválido. Mínimo R$ 10,00.' };
   }
   const { fee: baseFee, totalAmount: baseTotal } = calculateRechargeFee(amount);
   let fee = baseFee;
@@ -276,7 +280,7 @@ export async function createRecharge(input: CreateRechargeInput): Promise<Create
     const numAmount = Number(amount);
     if (!Number.isFinite(numAmount) || numAmount <= 0) return { success: false, error: 'Valor inválido.' };
 
-    const opAmountValidation = validateOperatorAndAmount(operator, numAmount, asaasIsConfigured());
+    const opAmountValidation = await validateOperatorAndAmount(operator, numAmount);
     if (!opAmountValidation.valid) return { success: false, error: opAmountValidation.error };
 
     const normalized = normalizePhone(digits);
@@ -581,7 +585,7 @@ export async function updateRechargeTxid(
 // --- Finalizar recarga aprovada (usado por adminMarkRechargePaid, adminApproveRechargeWithReceipt e polling Asaas)
 export async function finalizeApprovedRecharge(
   rechargeId: string,
-  options?: { receiptUrl?: string; asaasOperatorName?: string }
+  options?: { receiptUrl?: string }
 ): Promise<{ success: boolean; error?: string; recharge?: any }> {
   const recharge = await prisma.mobileRecharge.findUnique({
     where: { id: rechargeId },
@@ -727,8 +731,7 @@ export async function finalizeApprovedRecharge(
   try {
     const { notifyUserByTelegram } = require('./telegram.service');
     const valor = Number(recharge.totalAmount ?? recharge.amount ?? 0).toFixed(2).replace('.', ',');
-    const operadoraInfo = options?.asaasOperatorName ? `\nOperadora: ${options.asaasOperatorName}` : '';
-    notifyUserByTelegram(recharge.userId, `✅ PagDepix liquidou sua recarga!\nValor: R$ ${valor}${operadoraInfo}`).catch(() => {});
+    notifyUserByTelegram(recharge.userId, `✅ PagDepix liquidou sua recarga!\nValor: R$ ${valor}`).catch(() => {});
   } catch (_e) {}
 
   // Webhook white-label
@@ -774,121 +777,15 @@ export async function adminListRecharges(options?: { status?: string; page?: num
   return { recharges: items, total, page, limit };
 }
 
-export async function adminMarkRechargePaid(rechargeId: string): Promise<{ success: boolean; error?: string; recharge?: any; asaasPending?: boolean }> {
-  const recharge = await (prisma as any).mobileRecharge.findUnique({ where: { id: rechargeId } });
-  if (!recharge) return { success: false, error: 'Recarga não encontrada.' };
-  if (recharge.status === 'PAID') return { success: false, error: 'Recarga já está paga.' };
-  if (recharge.status === 'PROCESSING') return { success: false, error: 'Recarga já foi enviada ao Asaas, aguardando confirmação.' };
-
-  if (asaasIsConfigured()) {
-    // Atomic claim: PENDING → PROCESSING before calling Asaas to prevent
-    // two concurrent admin calls from triggering two Asaas recharges.
-    const claimed = await (prisma as any).mobileRecharge.updateMany({
-      where: { id: rechargeId, status: 'PENDING' },
-      data: { status: 'PROCESSING' },
-    });
-    if (claimed.count === 0) {
-      return { success: false, error: 'Recarga já está sendo processada ou foi finalizada.' };
-    }
-
-    let asaasResult: any;
-    try {
-      asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
-    } catch (err) {
-      await (prisma as any).mobileRecharge.updateMany({
-        where: { id: rechargeId, status: 'PROCESSING' },
-        data: { status: 'PENDING' },
-      }).catch(() => {});
-      throw err;
-    }
-
-    if (!asaasResult.success) {
-      await (prisma as any).mobileRecharge.updateMany({
-        where: { id: rechargeId, status: 'PROCESSING' },
-        data: { status: 'PENDING' },
-      }).catch(() => {});
-      return { success: false, error: `Asaas: ${asaasResult.error}` };
-    }
-
-    await (prisma as any).mobileRecharge.update({
-      where: { id: rechargeId },
-      data: { asaasRechargeId: asaasResult.id, asaasStatus: asaasResult.status },
-    });
-
-    if (asaasResult.status === 'CONFIRMED') {
-      return finalizeApprovedRecharge(rechargeId, { asaasOperatorName: asaasResult.operatorName });
-    }
-
-    const pendingRecharge = await (prisma as any).mobileRecharge.findUnique({
-      where: { id: rechargeId },
-      include: { user: { select: { id: true, name: true, email: true, telegram: true } } }
-    });
-    console.log(`[ASAAS] Recarga ${rechargeId} enviada (asaasId=${asaasResult.id}), aguardando confirmação.`);
-    return { success: true, asaasPending: true, recharge: pendingRecharge };
-  }
-
-  // Fallback sem Asaas (manual) — finalizeApprovedRecharge has its own atomic claim.
+export async function adminMarkRechargePaid(rechargeId: string): Promise<{ success: boolean; error?: string; recharge?: any }> {
   return finalizeApprovedRecharge(rechargeId);
 }
 
-/** Aprova recarga com comprovante. Com Asaas configurado, comprovante é opcional. */
 export async function adminApproveRechargeWithReceipt(
   rechargeId: string,
   receiptUrl?: string
-): Promise<{ success: boolean; error?: string; recharge?: any; asaasPending?: boolean }> {
-  const recharge = await (prisma as any).mobileRecharge.findUnique({ where: { id: rechargeId } });
-  if (!recharge) return { success: false, error: 'Recarga não encontrada.' };
-  if (recharge.status === 'PAID') return { success: false, error: 'Recarga já está paga.' };
-  if (recharge.status === 'PROCESSING') return { success: false, error: 'Recarga já foi enviada ao Asaas, aguardando confirmação.' };
-
-  if (asaasIsConfigured()) {
-    // Atomic claim: PENDING → PROCESSING before calling Asaas.
-    const claimed = await (prisma as any).mobileRecharge.updateMany({
-      where: { id: rechargeId, status: 'PENDING' },
-      data: { status: 'PROCESSING' },
-    });
-    if (claimed.count === 0) {
-      return { success: false, error: 'Recarga já está sendo processada ou foi finalizada.' };
-    }
-
-    let asaasResult: any;
-    try {
-      asaasResult = await asaasCreateRecharge(recharge.phoneNumber, recharge.amount);
-    } catch (err) {
-      await (prisma as any).mobileRecharge.updateMany({
-        where: { id: rechargeId, status: 'PROCESSING' },
-        data: { status: 'PENDING' },
-      }).catch(() => {});
-      throw err;
-    }
-
-    if (!asaasResult.success) {
-      await (prisma as any).mobileRecharge.updateMany({
-        where: { id: rechargeId, status: 'PROCESSING' },
-        data: { status: 'PENDING' },
-      }).catch(() => {});
-      return { success: false, error: `Asaas: ${asaasResult.error}` };
-    }
-
-    await (prisma as any).mobileRecharge.update({
-      where: { id: rechargeId },
-      data: { asaasRechargeId: asaasResult.id, asaasStatus: asaasResult.status },
-    });
-
-    if (asaasResult.status === 'CONFIRMED') {
-      return finalizeApprovedRecharge(rechargeId, { receiptUrl, asaasOperatorName: asaasResult.operatorName });
-    }
-
-    const pendingRecharge = await (prisma as any).mobileRecharge.findUnique({
-      where: { id: rechargeId },
-      include: { user: { select: { id: true, name: true, email: true, telegram: true } } }
-    });
-    console.log(`[ASAAS] Recarga ${rechargeId} enviada (asaasId=${asaasResult.id}), aguardando confirmação.`);
-    return { success: true, asaasPending: true, recharge: pendingRecharge };
-  }
-
-  // Fallback sem Asaas: comprovante obrigatório — finalizeApprovedRecharge has atomic claim.
-  if (!receiptUrl || receiptUrl.trim() === '') {
+): Promise<{ success: boolean; error?: string; recharge?: any }> {
+  if (!receiptUrl?.trim()) {
     return { success: false, error: 'Comprovante de liquidação é obrigatório.' };
   }
   return finalizeApprovedRecharge(rechargeId, { receiptUrl });

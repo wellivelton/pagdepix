@@ -25,6 +25,9 @@ export const costForAmount = (amount: number): number =>
 /** Valor mínimo do boleto: R$ 20,00 */
 export const MIN_BOLETO_AMOUNT = 20.00;
 
+/** Valor máximo do boleto: R$ 5.000,00 */
+export const MAX_BOLETO_AMOUNT = 5000.00;
+
 /** Comissão do afiliado = 20% do lucro (taxa - custo operacional). Nunca sobre valor do boleto. */
 export const AFFILIATE_COMMISSION_ON_PROFIT_RATE = 0.20;
 
@@ -32,7 +35,7 @@ export const TAX_RULES: TaxRule[] = [
   { minAmount: 20.00, maxAmount: 49.99, percentage: 0.04, fixedFee: 1.99, description: 'De R$ 20,00 até R$ 49,99' },
   { minAmount: 50.00, maxAmount: 99.99, percentage: 0.03, fixedFee: 1.99, description: 'De R$ 50,00 até R$ 99,99' },
   { minAmount: 100.00, maxAmount: 499.99, percentage: 0.025, fixedFee: 1.99, description: 'De R$ 100,00 até R$ 499,99' },
-  { minAmount: 500.00, maxAmount: Infinity, percentage: 0.02, fixedFee: 0.99, description: 'Acima de R$ 500,00' }
+  { minAmount: 500.00, maxAmount: 5000.00, percentage: 0.02, fixedFee: 0.99, description: 'De R$ 500,00 até R$ 5.000,00' }
 ];
 
 export const getTaxRule = (amount: number): TaxRule | null => {
@@ -80,7 +83,7 @@ export const calculateTax = (
   discountAmount?: number;
   couponPercentDisplay?: number;
 } => {
-  if (amount < MIN_BOLETO_AMOUNT) {
+  if (amount < MIN_BOLETO_AMOUNT || amount > MAX_BOLETO_AMOUNT) {
     return { taxRule: null, percentage: 0, fixedFee: 0, taxAmount: 0, totalAmount: 0, totalAmountExact: 0, isValid: false };
   }
 
