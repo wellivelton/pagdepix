@@ -44,12 +44,6 @@ const TYPE_ICON = {
   'send-pix': Send,
 } as const;
 
-const TYPE_LABEL = {
-  boleto:     'Boleto',
-  recharge:   'Recarga',
-  pix:        'Pix Copia e Cola',
-  'send-pix': 'Envio Pix',
-} as const;
 
 function relativeDate(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -148,7 +142,7 @@ function fmtCompact(v: number) {
 
 const EMPTY_STATS: Stats = {
   total: 0,
-  breakdown: { boletos: 0, recargas: 0, pix: 0, sendPix: 0 },
+  breakdown: { boletos: 0, recargas: 0, pix: 0 },
   recentTxs: [],
   sparkline: [],
 };
