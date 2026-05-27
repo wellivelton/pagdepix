@@ -155,9 +155,31 @@ function StepBar({ step }: { step: number }) {
   );
 }
 
+// ─── helpers de conversão ─────────────────────────────────────────────────────
+
+interface Rates { usdBrl: number; btcBrl: number; }
+
+function fmtCryptoPreview(totalBRL: number, currency: Currency, rates: Rates | null): string | null {
+  if (!rates || currency === 'DEPIX') return null;
+  if (currency === 'USDT') {
+    const usdt = totalBRL / rates.usdBrl;
+    return `≈ ${usdt.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
+  }
+  if (currency === 'BTC') {
+    const sats = Math.round((totalBRL / rates.btcBrl) * 100_000_000);
+    return `≈ ${sats.toLocaleString('pt-BR')} sats`;
+  }
+  return null;
+}
+
 // ─── PreviewBox ───────────────────────────────────────────────────────────────
 
-function PreviewBox({ preview, loading }: { preview: Preview | null; loading?: boolean }) {
+function PreviewBox({ preview, loading, paymentCurrency, rates }: {
+  preview: Preview | null;
+  loading?: boolean;
+  paymentCurrency?: Currency;
+  rates?: Rates | null;
+}) {
   if (loading) {
     return (
       <div className="mt-2 flex items-center gap-1.5 text-xs text-app-muted animate-pulse">
@@ -166,6 +188,9 @@ function PreviewBox({ preview, loading }: { preview: Preview | null; loading?: b
     );
   }
   if (!preview?.isValid) return null;
+  const cryptoLine = paymentCurrency && rates
+    ? fmtCryptoPreview(preview.totalAmount, paymentCurrency, rates)
+    : null;
   return (
     <div className="mt-2 p-2.5 bg-bitcoin/5 border border-bitcoin/20 rounded-lg text-xs space-y-1">
       {preview.cupomValido ? (
@@ -187,7 +212,12 @@ function PreviewBox({ preview, loading }: { preview: Preview | null; loading?: b
       )}
       <div className="flex justify-between font-bold text-app-text border-t border-app-stroke/50 pt-1">
         <span>Total</span>
-        <span className="text-bitcoin">{fmtBRL(preview.totalAmount)}</span>
+        <div className="text-right">
+          <span className="text-bitcoin">{fmtBRL(preview.totalAmount)}</span>
+          {cryptoLine && (
+            <p className="text-[10px] font-normal text-app-muted mt-0.5">{cryptoLine}</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -219,7 +249,7 @@ function CopyButton({ text }: { text: string }) {
 // ─── BoletoCard ───────────────────────────────────────────────────────────────
 
 function BoletoCard({
-  item, index, total, preview, previewLoading, decoded, decodeLoading, decodeError, onChange, onRemove,
+  item, index, total, preview, previewLoading, decoded, decodeLoading, decodeError, onChange, onRemove, paymentCurrency, rates,
 }: {
   item: BoletoItem;
   index: number;
@@ -231,6 +261,8 @@ function BoletoCard({
   decodeError: string;
   onChange: (patch: Partial<BoletoItem>) => void;
   onRemove: () => void;
+  paymentCurrency: Currency;
+  rates: Rates | null;
 }) {
   return (
     <div className="bg-app-surface border border-app-stroke rounded-xl overflow-hidden shadow-sm">
@@ -350,7 +382,7 @@ function BoletoCard({
           )}
         </div>
 
-        <PreviewBox preview={preview} loading={previewLoading} />
+        <PreviewBox preview={preview} loading={previewLoading} paymentCurrency={paymentCurrency} rates={rates} />
       </div>
     </div>
   );
@@ -382,16 +414,20 @@ export default function PayBoleto() {
   const [globalError, setGlobalError] = useState('');
   const [batch, setBatch] = useState<BatchState | null>(null);
   const [paymentDetected, setPaymentDetected] = useState(false);
+  const [rates, setRates] = useState<Rates | null>(null);
 
   const couponRef = useRef<HTMLInputElement>(null);
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const decodeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Detectar indicação
+  // Detectar indicação + buscar câmbio
   useEffect(() => {
     api.get('/user/referral').then(({ data }) => {
       if (data.referredByCode) setReferralAutoApplied(true);
+    }).catch(() => {});
+    api.get('/rates').then(({ data }) => {
+      if (data?.usdBrl && data?.btcBrl) setRates({ usdBrl: data.usdBrl, btcBrl: data.btcBrl });
     }).catch(() => {});
   }, []);
 
@@ -648,6 +684,8 @@ export default function PayBoleto() {
               decodeError={decodeError[item.id] ?? ''}
               onChange={(patch) => updateItem(item.id, patch)}
               onRemove={() => removeItem(item.id)}
+              paymentCurrency={paymentCurrency}
+              rates={rates}
             />
           ))}
 
@@ -731,7 +769,14 @@ export default function PayBoleto() {
               <span className="text-sm text-app-muted">
                 {items.length > 1 ? `Total estimado (${items.length} boletos)` : 'Total estimado'}
               </span>
-              <span className="text-lg font-bold text-bitcoin">{fmtBRL(totalEstimated)}</span>
+              <div className="text-right">
+                <span className="text-lg font-bold text-bitcoin">{fmtBRL(totalEstimated)}</span>
+                {fmtCryptoPreview(totalEstimated, paymentCurrency, rates) && (
+                  <p className="text-xs font-normal text-app-muted mt-0.5">
+                    {fmtCryptoPreview(totalEstimated, paymentCurrency, rates)}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
